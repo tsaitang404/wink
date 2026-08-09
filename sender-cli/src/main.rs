@@ -31,6 +31,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // --help / -h：显示帮助并正常退出
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_usage();
+        exit(0);
+    }
     if args.len() < 2 {
         print_usage();
         exit(1);
