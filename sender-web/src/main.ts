@@ -82,8 +82,8 @@ function currentParams() {
   const fps = Number(($('fps') as HTMLInputElement).value);
   const qrVersion = Number(($('qr-size') as HTMLSelectElement).value);
   const payloadCap = QR_CAPACITY[qrVersion]! - HEADER_LEN;
-  // 块长自动优化：尽量填满 QR 容量（pad 最少，QR 变化明显）。
-  // LT degree 不影响帧大小（一帧始终 blockLen 字节），所以 blockLen 可直接 = 容量
+  // 块长自动优化：填满 QR 容量（pad 最少，QR 变化明显）。
+  // JS 端 qrSegments 强制 byte mode 单段，容量精确，无需余量（与 Rust CLI 一致）
   const blockLen = Math.max(64, payloadCap);
   return { fps, qrVersion, blockLen, payloadCap };
 }

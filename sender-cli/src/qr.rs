@@ -6,22 +6,31 @@
     clippy::cast_sign_loss
 )]
 
-use qrcode::{EcLevel, QrCode, Version};
+use qrcode::{bits::Bits, types::EcLevel, QrCode, Version};
 
 /// 把 payload 编码为 QR 并渲染成 ANSI 半块字符（黑白）
 /// `version_hint`：Some(v) 强制指定版本（1-40），None 自动选最小
+/// 强制 byte mode 单段（与 JS 端 qrSegments 一致）——避免 qrcode crate 的
+/// `push_optimal_data` 自动分段（随机二进制会被拆成多段，段头 4+16 bits 开销
+/// 在容量边界触发 DataTooLong，实测 12/300 帧失败）
 /// 返回 (字符串行, 使用的 QR 版本号)
 #[must_use]
 pub fn render_ansi(payload: &[u8], quiet_zone: usize, version_hint: Option<u32>) -> (String, u32) {
     let code = match version_hint {
         Some(v) if (1..=40).contains(&v) => {
-            QrCode::with_version(payload, Version::Normal(v as i16), EcLevel::L)
-                .map_err(|e| format!("payload too large for v{v}: {e}"))
+            let mut bits = Bits::new(Version::Normal(v as i16));
+            match bits
+                .push_byte_data(payload)
+                .and_then(|()| bits.push_terminator(EcLevel::L))
+                .and_then(|()| QrCode::with_bits(bits, EcLevel::L))
+            {
+                Ok(c) => c,
+                // 指定版本装不下（payload 超容量）→ 回退自动版本，不 panic
+                Err(_) => encode_auto(payload),
+            }
         }
-        _ => QrCode::with_error_correction_level(payload, EcLevel::L)
-            .map_err(|e| format!("payload too large for any QR version: {e}")),
-    }
-    .unwrap_or_else(|e| panic!("{e}"));
+        _ => encode_auto(payload),
+    };
     let version = match code.version() {
         Version::Normal(v) | Version::Micro(v) => v as u32,
     };
@@ -45,6 +54,21 @@ pub fn render_ansi(payload: &[u8], quiet_zone: usize, version_hint: Option<u32>)
         out.push('\n');
     }
     (out, version)
+}
+
+/// 自动选最小版本 + 强制 byte 单段
+fn encode_auto(payload: &[u8]) -> QrCode {
+    for v in 1..=40u16 {
+        let mut bits = Bits::new(Version::Normal(v.cast_signed()));
+        if let Ok(code) = bits
+            .push_byte_data(payload)
+            .and_then(|()| bits.push_terminator(EcLevel::L))
+            .and_then(|()| QrCode::with_bits(bits, EcLevel::L))
+        {
+            return code;
+        }
+    }
+    panic!("payload too large for any QR version")
 }
 
 fn module_at(

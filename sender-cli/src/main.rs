@@ -31,6 +31,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // --version / -V：显示版本并正常退出
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("wink {VERSION}");
+        exit(0);
+    }
     // --help / -h：显示帮助并正常退出
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print_usage();
@@ -88,6 +93,7 @@ fn main() {
     // 4. 块长：不传则自动优化 —— 尽量填满所选 QR 版本容量（pad 最少，QR 变化明显）
     //    关键：LT 的 degree 不影响帧大小（一帧始终 block_len 字节，XOR 任意个块长度不变），
     //    所以 block_len 可以 = 容量，每帧装满，数据区几乎全变
+    //    （qr.rs 已强制 byte mode 单段，容量表精确，无需分段余量）
     let block_len = block_len.unwrap_or_else(|| {
         let version = qr_version.unwrap_or_else(|| {
             let cols = terminal_cols().unwrap_or(80);
@@ -199,13 +205,16 @@ fn print_usage() {
          \x20 --fps 1-60   帧率（默认 30）\n\
          \x20 --block N    块长字节（默认按二维码容量自动优化）\n\
          \x20 -v<N>        二维码版本 1-40（如 -v15 / -v20 / -v40，默认自动选最大可容纳）\n\
+         \x20 --version    显示版本号\n\
          \n\
          播放中:\n\
          \x20 空格      暂停/继续\n\
          \x20 b<块号>    跳到含该块的帧并暂停（如 b3）\n\
          \x20 f<帧号>    跳到指定帧并暂停（如 f42）\n\
          \x20 <百分比>%  从该百分比位置开始并暂停\n\
-         \x20 q          退出"
+         \x20 q          退出\n\
+         \n\
+         仓库: https://github.com/tsaitang404/wink"
     );
 }
 
