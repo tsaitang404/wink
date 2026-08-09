@@ -125,111 +125,30 @@ fn main() {
         eprintln!("  空格=暂停/继续 · b<块号>=跳块并暂停 · f<帧号>=跳帧并暂停 · N%=跳百分比并暂停 · q=退出");
         let start = std::time::Instant::now();
         let mut seq: u32 = 0;
+        // 命令上下文（供 process_cmd / pause_loop 复用）
+        let ctx = CmdCtx {
+            enc: &enc,
+            session_id,
+            block_len,
+            total_len,
+            payload_fnv,
+            fps,
+            start,
+        };
 
         loop {
-            render_frame(
-                &enc,
-                seq,
-                session_id,
-                block_len,
-                total_len,
-                payload_fnv,
-                fps,
-                start.elapsed(),
-            );
+            render_frame(&ctx, seq);
 
             // 读命令行（有输入才处理，无输入立即返回）
             if let Some(raw_cmd) = read_command_line() {
                 let cmd = raw_cmd.trim();
                 // 独立空格（未 trim 前 == " "）→ 暂停
                 if raw_cmd == " " && cmd.is_empty() {
-                    // 空格 = 暂停/继续（保持当前帧，等再次空格/回车）
-                    eprintln!("\x1b[K⏸ 已暂停 —— 按空格或回车继续");
-                    let mut quit = false;
-                    loop {
-                        match read_command_line() {
-                            Some(c)
-                                if c.trim() == " " || c.trim() == "p" || c.trim().is_empty() =>
-                            {
-                                eprintln!("\x1b[K🚀 继续传输");
-                                break;
-                            }
-                            Some(c) if c.trim() == "q" => {
-                                quit = true;
-                                break;
-                            }
-                            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
-                        }
-                    }
-                    if quit {
+                    if pause_loop(&ctx, &mut seq) {
                         break;
                     }
-                } else if cmd == "q" {
+                } else if process_cmd(&raw_cmd, &ctx, &mut seq) {
                     break;
-                } else if let Some(bs) = cmd.strip_prefix('b') {
-                    // 块跳转：b<块号>（无空格，避免与暂停空格冲突）
-                    if let Ok(b) = bs.trim().parse::<usize>() {
-                        let s = enc
-                            .find_deg1_seq(b, seq, 8192)
-                            .or_else(|| enc.find_any_seq(b, seq, 65536));
-                        if let Some(s) = s {
-                            seq = s;
-                            eprintln!("\x1b[K⏭ 已显示块 #{b} 的帧 {s} —— 按空格继续");
-                            render_frame(
-                                &enc,
-                                s,
-                                session_id,
-                                block_len,
-                                total_len,
-                                payload_fnv,
-                                fps,
-                                start.elapsed(),
-                            );
-                            if !pause_until_space() {
-                                break;
-                            }
-                        } else {
-                            eprintln!("\x1b[K⚠️ 块 #{b} 在 65536 帧内找不到任何包含它的帧");
-                        }
-                    }
-                } else if let Some(p) = cmd.strip_suffix('%') {
-                    if let Ok(pct) = p.trim().parse::<u32>() {
-                        let total_est = (enc.k as u64 * 115 / 100) as u32;
-                        seq = (total_est.saturating_mul(pct) / 100).max(1);
-                        eprintln!("\x1b[K⏭ 已显示 {pct}%（帧 {seq}）—— 按空格继续");
-                        render_frame(
-                            &enc,
-                            seq,
-                            session_id,
-                            block_len,
-                            total_len,
-                            payload_fnv,
-                            fps,
-                            start.elapsed(),
-                        );
-                        if !pause_until_space() {
-                            break;
-                        }
-                    }
-                } else if let Some(fs) = cmd.strip_prefix('f') {
-                    // 帧跳转：f<帧号>（无空格，与暂停空格区分）
-                    if let Ok(n) = fs.trim().parse::<u32>() {
-                        seq = n;
-                        eprintln!("\x1b[K⏭ 已显示帧 {n} —— 按空格继续");
-                        render_frame(
-                            &enc,
-                            seq,
-                            session_id,
-                            block_len,
-                            total_len,
-                            payload_fnv,
-                            fps,
-                            start.elapsed(),
-                        );
-                        if !pause_until_space() {
-                            break;
-                        }
-                    }
                 }
             }
             std::thread::sleep(std::time::Duration::from_secs_f64(1.0 / f64::from(fps)));
@@ -385,6 +304,11 @@ thread_local! {
     static INPUT_BUF: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
+/// 当前输入缓冲内容（回显用：渲染状态行时显示 `wink> <缓冲>`）
+fn input_preview() -> String {
+    INPUT_BUF.with(|cell| cell.borrow().clone())
+}
+
 /// 非阻塞读整行命令（raw mode 下逐字符读入，Enter 提交）
 /// 返回 None = 无完整行；Some(line) = 收到完整命令行
 /// 底部固定一行输入行：`wink> `
@@ -431,48 +355,110 @@ fn read_command_line() -> Option<String> {
     })
 }
 
-/// 渲染指定帧到备用屏（光标归位覆盖，不滚动）
-#[allow(clippy::too_many_arguments)]
-fn render_frame(
-    enc: &LTEncoder,
-    seq: u32,
+/// 命令上下文：帧渲染所需参数集合
+struct CmdCtx<'a> {
+    enc: &'a LTEncoder,
     session_id: u16,
     block_len: usize,
     total_len: u32,
     payload_fnv: u32,
     fps: u32,
-    elapsed: std::time::Duration,
-) {
-    let block = enc.encode(seq);
+    start: std::time::Instant,
+}
+
+/// 渲染指定帧到备用屏（光标归位覆盖，不滚动）+ 底部输入回显行
+fn render_frame(ctx: &CmdCtx, seq: u32) {
+    let block = ctx.enc.encode(seq);
     let header = FrameHeader {
-        session_id,
+        session_id: ctx.session_id,
         seq,
-        k: enc.k as u16,
-        block_len: block_len as u16,
-        total_len,
-        payload_fnv,
+        k: ctx.enc.k as u16,
+        block_len: ctx.block_len as u16,
+        total_len: ctx.total_len,
+        payload_fnv: ctx.payload_fnv,
     };
     let frame = pack_frame(&header, &block);
     let (ansi, _v) = qr::render_ansi(&frame, 2);
     print!("\x1b[H{ansi}");
-    print_status(seq, enc.k, fps, elapsed);
+    print_status(seq, ctx.enc.k, ctx.fps, ctx.start.elapsed());
+    // 输入回显：状态行下一行显示 `wink> <当前输入>`（打字可见）
+    print!("\x1b[K  wink> {}\r", input_preview());
     std::io::stdout().flush().ok();
 }
 
-/// 暂停：保持当前帧，等空格/回车继续，q 退出（返回 false 表示要退出）
+/// 跳转命令（b/f/%）：设 seq、渲染目标帧、进入暂停
+/// 返回 true = 应退出
+fn jump_and_pause(ctx: &CmdCtx, seq: &mut u32, target: u32, msg: &str) -> bool {
+    *seq = target;
+    render_frame(ctx, target);
+    eprintln!("\x1b[K⏭ {msg} —— 空格继续或输入命令");
+    pause_loop(ctx, seq)
+}
+
+/// 暂停循环：保持当前帧。空格/回车继续；q 退出；其他命令照常执行（跳转后保持暂停）
+/// 返回 true = 应退出
 #[allow(unsafe_code)]
-fn pause_until_space() -> bool {
-    eprintln!("\x1b[K⏸ 已暂停 —— 按空格继续（q 退出）");
+fn pause_loop(ctx: &CmdCtx, seq: &mut u32) -> bool {
+    eprintln!("\x1b[K⏸ 已暂停 —— 空格继续 · 命令照常可用（b/f/%/q）");
     loop {
+        // 暂停中也刷新输入回显
+        render_frame(ctx, *seq);
         match read_command_line() {
             Some(c) if c.trim() == " " || c.trim() == "p" || c.trim().is_empty() => {
                 eprintln!("\x1b[K🚀 继续传输");
-                return true;
+                return false;
             }
-            Some(c) if c.trim() == "q" => return false,
-            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Some(c) if c.trim() == "q" => return true,
+            Some(raw) => {
+                if process_cmd(&raw, ctx, seq) {
+                    return true;
+                }
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
         }
     }
+}
+
+/// 处理一行命令。返回 true = 应退出
+/// 支持：b<块号> / f<帧号> / N% / q / 未知命令提示
+fn process_cmd(raw_cmd: &str, ctx: &CmdCtx, seq: &mut u32) -> bool {
+    let cmd = raw_cmd.trim();
+    if cmd == "q" {
+        return true;
+    }
+    if let Some(bs) = cmd.strip_prefix('b') {
+        // 块跳转：b<块号>
+        if let Ok(b) = bs.trim().parse::<usize>() {
+            let s = ctx
+                .enc
+                .find_deg1_seq(b, *seq, 8192)
+                .or_else(|| ctx.enc.find_any_seq(b, *seq, 65536));
+            if let Some(s) = s {
+                return jump_and_pause(ctx, seq, s, &format!("已显示块 #{b} 的帧 {s}"));
+            }
+            eprintln!("\x1b[K⚠️ 块 #{b} 在 65536 帧内找不到任何包含它的帧");
+        }
+        return false;
+    }
+    if let Some(p) = cmd.strip_suffix('%') {
+        // 百分比跳转
+        if let Ok(pct) = p.trim().parse::<u32>() {
+            let total_est = (ctx.enc.k as u64 * 115 / 100) as u32;
+            let target = (total_est.saturating_mul(pct) / 100).max(1);
+            return jump_and_pause(ctx, seq, target, &format!("已显示 {pct}%（帧 {target}）"));
+        }
+        return false;
+    }
+    if let Some(fs) = cmd.strip_prefix('f') {
+        // 帧跳转：f<帧号>
+        if let Ok(n) = fs.trim().parse::<u32>() {
+            return jump_and_pause(ctx, seq, n, &format!("已显示帧 {n}"));
+        }
+        return false;
+    }
+    // 未知命令提示
+    eprintln!("\x1b[K⚠️ 未知命令: {cmd} —— 空格暂停 · b<块号> · f<帧号> · N% · q 退出");
+    false
 }
 
 /// 等待空格（返回 true）或 q（返回 false）。raw mode 单键。
