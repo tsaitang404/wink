@@ -20,7 +20,7 @@ mod fountain;
 mod protocol;
 mod qr;
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::process::exit;
 
 use fountain::LTEncoder;
@@ -71,53 +71,72 @@ fn main() {
 
     // 4. 元信息 QR
     let manifest = build_manifest_bytes(name_bytes, &container, session_id, fps, block_len);
-    eprintln!("📡 元信息 QR —— 接收端扫码预览，按 Enter 开始（Ctrl+C 退出）");
-    let (ansi, _v) = qr::render_ansi(&manifest, 2);
-    print!("{ansi}");
-    std::io::stdout().flush().ok();
+    let (manifest_ansi, _v) = qr::render_ansi(&manifest, 2);
 
-    // 等待 Enter
-    let mut buf = [0u8; 1];
-    let _ = std::io::stdin().read(&mut buf);
-
-    // 5. 帧流
-    eprintln!("\n🚀 开始传输 @ {fps}fps（按 q 退出）");
+    // 主循环：显示 manifest → 按 Enter 开始帧流 → 按 q 停止回到 manifest
     let enc = LTEncoder::new(&container, block_len, session_id);
     let payload_fnv = fnv1a(&container);
     let total_len = container.len() as u32;
+    let mut total_sent: u64 = 0;
+    let start_all = std::time::Instant::now();
 
-    let mut seq: u32 = 0;
-    let start = std::time::Instant::now();
     loop {
-        let block = enc.encode(seq);
-        let header = FrameHeader {
-            session_id,
-            seq,
-            k: enc.k as u16,
-            block_len: block_len as u16,
-            total_len,
-            payload_fnv,
-        };
-        let frame = pack_frame(&header, &block);
-        let (ansi, _v) = qr::render_ansi(&frame, 2);
-        clear_screen();
-        print!("{ansi}");
-        print_status(seq, enc.k, fps, start.elapsed());
+        // 显示元信息 QR（在主屏幕，不用备用屏）
+        eprintln!("📡 元信息 QR —— 接收端扫码预览，按 Enter 开始（q 退出）");
+        print!("{manifest_ansi}");
         std::io::stdout().flush().ok();
 
-        // 检查按键（非阻塞，q 退出）
-        if key_pressed('q') {
+        // 等待 Enter（q 直接退出）
+        if !wait_enter_or_q() {
+            clear_screen();
+            eprintln!(
+                "👋 已退出 · 共发送 {total_sent} 帧 · {}s",
+                start_all.elapsed().as_secs()
+            );
             break;
         }
-        std::thread::sleep(std::time::Duration::from_secs_f64(1.0 / f64::from(fps)));
-        seq = seq.wrapping_add(1);
+
+        // 进入备用屏幕（不会滚动污染主屏）
+        enter_alt_screen();
+        let termios = enter_raw_mode();
+        eprintln!("\n🚀 开始传输 @ {fps}fps（按 q 停止，回到元信息）");
+        let start = std::time::Instant::now();
+        let mut seq: u32 = 0;
+
+        loop {
+            let block = enc.encode(seq);
+            let header = FrameHeader {
+                session_id,
+                seq,
+                k: enc.k as u16,
+                block_len: block_len as u16,
+                total_len,
+                payload_fnv,
+            };
+            let frame = pack_frame(&header, &block);
+            let (ansi, _v) = qr::render_ansi(&frame, 2);
+            // 光标归位 + 覆盖渲染（不滚动），不用清屏避免闪烁
+            print!("\x1b[H{ansi}");
+            print_status(seq, enc.k, fps, start.elapsed());
+            std::io::stdout().flush().ok();
+
+            if key_pressed('q') {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs_f64(1.0 / f64::from(fps)));
+            seq = seq.wrapping_add(1);
+        }
+
+        // 退出备用屏 + 恢复 termios
+        restore_termios(termios);
+        leave_alt_screen();
+        total_sent += u64::from(seq);
+        eprintln!(
+            "\n⏹ 已停止 · 本轮 {seq} 帧 · {}s",
+            start.elapsed().as_secs()
+        );
+        eprintln!("────────────────────────────");
     }
-    clear_screen();
-    eprintln!(
-        "✅ 已停止 · 发送 {} 帧 · {}s",
-        seq,
-        start.elapsed().as_secs()
-    );
 }
 
 fn print_usage() {
@@ -202,21 +221,94 @@ fn print_status(seq: u32, k: usize, fps: u32, elapsed: std::time::Duration) {
     eprintln!("\x1b[Kwink · 帧 {seq} · K={k} · 需求≈{need} · {fps}fps · {secs}s · 按 q 停止");
 }
 
-/// 非阻塞读 stdin 检查是否按下指定键（termios raw mode）
-/// 需要 libc 系统调用（fcntl/read），无内存风险；unsafe 由 C ABI 保证
+// ── 终端控制：备用屏幕 + raw mode ─────────────────────────────
+
+/// 进入备用屏幕缓冲（像 vim/top：不污染主屏幕，退出时还原）
+fn enter_alt_screen() {
+    print!("\x1b[?1049h");
+    std::io::stdout().flush().ok();
+}
+
+/// 退出备用屏幕缓冲
+fn leave_alt_screen() {
+    print!("\x1b[?1049l");
+    std::io::stdout().flush().ok();
+}
+
+/// 进入 raw mode：关闭 canonical（行缓冲）和 echo，让单键立即可读
+/// 返回原始 termios 用于恢复
+#[allow(unsafe_code)]
+fn enter_raw_mode() -> libc::termios {
+    use std::os::fd::AsRawFd;
+    let fd = std::io::stdin().as_raw_fd();
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::tcgetattr(fd, &raw mut termios);
+        let raw = termios;
+        let mut new = raw;
+        new.c_lflag &= !(libc::ICANON | libc::ECHO);
+        new.c_cc[libc::VMIN] = 0;
+        new.c_cc[libc::VTIME] = 0;
+        libc::tcsetattr(fd, libc::TCSANOW, &raw const new);
+    }
+    termios
+}
+
+/// 恢复 termios
+#[allow(unsafe_code)]
+fn restore_termios(termios: libc::termios) {
+    use std::os::fd::AsRawFd;
+    let fd = std::io::stdin().as_raw_fd();
+    unsafe {
+        libc::tcsetattr(fd, libc::TCSANOW, &raw const termios);
+    }
+}
+
+/// 非阻塞检查 stdin 是否有指定按键（用 poll，不阻塞）
+/// 需要 raw mode 才能读到单键
 #[allow(unsafe_code)]
 fn key_pressed(key: char) -> bool {
     use std::os::fd::AsRawFd;
     let fd = std::io::stdin().as_raw_fd();
-    // 设置 non-blocking 读
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
-    unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
-    let mut buf = [0u8; 16];
+    let mut fds = [libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    }];
+    let r = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
+    if r <= 0 {
+        return false;
+    }
+    let mut buf = [0u8; 64];
     let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-    // 恢复 blocking
-    unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
     if n <= 0 {
         return false;
     }
-    buf.iter().any(|&b| b as char == key)
+    buf[..n as usize].iter().any(|&b| b as char == key)
+}
+
+/// 等待 Enter（返回 true）或 q（返回 false）。canonical 模式行缓冲即可。
+#[allow(unsafe_code)]
+fn wait_enter_or_q() -> bool {
+    use std::os::fd::AsRawFd;
+    let fd = std::io::stdin().as_raw_fd();
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::tcgetattr(fd, &raw mut termios);
+        let mut new = termios;
+        new.c_lflag &= !libc::ICANON; // 关 canonical，单键返回
+        new.c_lflag &= !libc::ECHO;
+        new.c_cc[libc::VMIN] = 1;
+        new.c_cc[libc::VTIME] = 0;
+        libc::tcsetattr(fd, libc::TCSANOW, &raw const new);
+    }
+    let mut buf = [0u8; 1];
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+    unsafe {
+        libc::tcsetattr(fd, libc::TCSANOW, &raw const termios);
+    }
+    if n <= 0 {
+        return false;
+    }
+    buf[0] != b'q'
 }
