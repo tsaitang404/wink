@@ -99,7 +99,8 @@ fn main() {
         // 进入备用屏幕（不会滚动污染主屏）
         enter_alt_screen();
         let termios = enter_raw_mode();
-        eprintln!("\n🚀 开始传输 @ {fps}fps（按 q 停止，回到元信息）");
+        eprintln!("\n🚀 开始传输 @ {fps}fps —— 底部输入命令");
+        eprintln!("  block N = 重播第 N 块 · 纯数字 = 固定该帧 · N% = 从 N% 位置开始 · q = 停止");
         let start = std::time::Instant::now();
         let mut seq: u32 = 0;
 
@@ -120,8 +121,48 @@ fn main() {
             print_status(seq, enc.k, fps, start.elapsed());
             std::io::stdout().flush().ok();
 
-            if key_pressed('q') {
-                break;
+            // 读命令行（有输入才处理，无输入立即返回）
+            if let Some(cmd) = read_command_line() {
+                let cmd = cmd.trim();
+                if cmd == "q" {
+                    break;
+                } else if let Some(n) = cmd.strip_prefix("block ") {
+                    if let Ok(b) = n.trim().parse::<usize>() {
+                        if let Some(s) = enc.find_deg1_seq(b, seq, 8192) {
+                            eprintln!("\x1b[K🔁 重播块 #{b}（帧 {s}）10 次");
+                            for _ in 0..10 {
+                                let rb = enc.encode(s);
+                                let rh = FrameHeader {
+                                    session_id,
+                                    seq: s,
+                                    k: enc.k as u16,
+                                    block_len: block_len as u16,
+                                    total_len,
+                                    payload_fnv,
+                                };
+                                let rf = pack_frame(&rh, &rb);
+                                let (ransi, _v) = qr::render_ansi(&rf, 2);
+                                print!("\x1b[H{ransi}");
+                                print_status(s, enc.k, fps, start.elapsed());
+                                std::io::stdout().flush().ok();
+                                std::thread::sleep(std::time::Duration::from_secs_f64(
+                                    1.0 / f64::from(fps),
+                                ));
+                            }
+                        } else {
+                            eprintln!("\x1b[K⚠️ 块 #{b} 在 8192 帧内找不到 degree-1 帧");
+                        }
+                    }
+                } else if let Some(p) = cmd.strip_suffix('%') {
+                    if let Ok(pct) = p.trim().parse::<u32>() {
+                        let total_est = (enc.k as u64 * 115 / 100) as u32;
+                        seq = (total_est.saturating_mul(pct) / 100).max(1);
+                        eprintln!("\x1b[K⏭ 跳到 {pct}%（帧 {seq}）继续");
+                    }
+                } else if let Ok(n) = cmd.parse::<u32>() {
+                    seq = n;
+                    eprintln!("\x1b[K📌 固定帧 {n} 连续播放");
+                }
             }
             std::thread::sleep(std::time::Duration::from_secs_f64(1.0 / f64::from(fps)));
             seq = seq.wrapping_add(1);
@@ -264,10 +305,11 @@ fn restore_termios(termios: libc::termios) {
     }
 }
 
-/// 非阻塞检查 stdin 是否有指定按键（用 poll，不阻塞）
-/// 需要 raw mode 才能读到单键
+/// 非阻塞读整行命令（raw mode 下逐字符读入，Enter 提交）
+/// 返回 None = 无输入；Some(line) = 收到完整命令行
+/// 底部固定一行输入行：`wink> `
 #[allow(unsafe_code)]
-fn key_pressed(key: char) -> bool {
+fn read_command_line() -> Option<String> {
     use std::os::fd::AsRawFd;
     let fd = std::io::stdin().as_raw_fd();
     let mut fds = [libc::pollfd {
@@ -277,14 +319,38 @@ fn key_pressed(key: char) -> bool {
     }];
     let r = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
     if r <= 0 {
-        return false;
+        return None;
     }
+    // 读入一行（有数据就持续读，直到 \n 或超时）
+    let mut line = String::new();
     let mut buf = [0u8; 64];
-    let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-    if n <= 0 {
-        return false;
+    loop {
+        let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        for &b in &buf[..n as usize] {
+            if b == b'\n' || b == b'\r' {
+                return Some(line.clone());
+            }
+            if b == 0x7f || b == 8 {
+                // 退格
+                line.pop();
+            } else {
+                line.push(b as char);
+            }
+        }
+        // 再 poll 一次，有更多数据继续读
+        let r2 = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
+        if r2 <= 0 {
+            break;
+        }
     }
-    buf[..n as usize].iter().any(|&b| b as char == key)
+    if line.is_empty() {
+        None
+    } else {
+        Some(line)
+    }
 }
 
 /// 等待 Enter（返回 true）或 q（返回 false）。canonical 模式行缓冲即可。

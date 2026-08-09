@@ -174,12 +174,31 @@ impl LTEncoder {
                 *item ^= self.blocks[off + w];
             }
         }
-        let mut bytes = Vec::with_capacity(self.block_len);
-        for w in &out {
-            bytes.extend_from_slice(&w.to_le_bytes());
+        let mut bytes = vec![0u8; self.block_len];
+        for (i, w) in out.iter().enumerate() {
+            bytes[i * 4] = *w as u8;
+            bytes[i * 4 + 1] = (*w >> 8) as u8;
+            bytes[i * 4 + 2] = (*w >> 16) as u8;
+            bytes[i * 4 + 3] = (*w >> 24) as u8;
         }
-        bytes.truncate(self.block_len);
         bytes
+    }
+
+    /// 找到生成 degree-1 帧且只包含目标块的 seq（重发指定块用）
+    /// 扫描有限范围（默认 8192 个候选），找到即返回；找不到返回 None
+    #[must_use]
+    pub fn find_deg1_seq(&self, block: usize, from_seq: u32, scan_limit: usize) -> Option<u32> {
+        if block >= self.k {
+            return None;
+        }
+        for i in 0..scan_limit {
+            let s = from_seq.wrapping_add(i as u32);
+            let idx = frame_indices(self.k, &self.cdf, self.session_id, s);
+            if idx.len() == 1 && idx[0] == block {
+                return Some(s);
+            }
+        }
+        None
     }
 }
 
