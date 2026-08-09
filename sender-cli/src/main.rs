@@ -107,7 +107,9 @@ fn main() {
     });
 
     // 5. 元信息 QR：自动选合适版本（内容小就用小码，不跟随 -v）
-    let manifest = build_manifest_bytes(name_bytes, &container, session_id, fps, block_len);
+    let manifest = build_manifest_bytes(
+        name_bytes, &container, session_id, fps, block_len, qr_version,
+    );
     let (manifest_ansi, manifest_version) = qr::render_ansi(&manifest, 2, None);
 
     // 主循环：显示 manifest → 按空格开始帧流 → 按 q 停止回到 manifest
@@ -254,6 +256,7 @@ fn build_manifest_bytes(
     session_id: u16,
     fps: u32,
     block_len: usize,
+    qr_version: Option<u32>,
 ) -> Vec<u8> {
     let k = container.len().div_ceil(block_len).max(1);
     let est = (k as u64 * 115 / 100).div_ceil(u64::from(fps)) as u32;
@@ -269,7 +272,8 @@ fn build_manifest_bytes(
     out.extend_from_slice(&(k as u16).to_le_bytes());
     out.extend_from_slice(&(block_len as u16).to_le_bytes());
     out.extend_from_slice(&session_id.to_le_bytes());
-    out.extend_from_slice(&15u16.to_le_bytes()); // qrVersion 建议
+    // qrVersion：帧流使用的版本（用户 -v 指定；未指定写 0 = 自动/终端自适应）
+    out.extend_from_slice(&(qr_version.unwrap_or(0) as u16).to_le_bytes());
     out.extend_from_slice(&(fps as u16).to_le_bytes());
     out.extend_from_slice(&est.to_le_bytes());
     out.extend_from_slice(&fnv1a(container).to_le_bytes()); // payloadFnv
