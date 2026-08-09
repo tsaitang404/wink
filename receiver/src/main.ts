@@ -217,15 +217,29 @@ function renderFrameTimeline() {
   const seqs = decoder.receivedSeqs();
   const timeline = $('frame-timeline');
   timeline.innerHTML = '';
-  // 横轴 = 总帧数（0..framesNeeded），有效帧数/总帧 —— 完成时全绿
   const total = Math.max(1, framesNeeded);
+  // 没收到帧：空位图
+  if (seqs.size === 0) {
+    const pctSpan = document.createElement('span');
+    pctSpan.className = 'ft-pct';
+    pctSpan.textContent = '0%';
+    timeline.appendChild(pctSpan);
+    return;
+  }
+  // 窗口起点 = 收到的第一个帧 seq（喷泉码不需要固定起点，
+  // 接收端中途对准时前面帧已丢失，固定 0..N 会让位图一直灰）
+  let first = Infinity;
+  for (const s of seqs) {
+    if (s < first) first = s;
+  }
   const CELLS = 120;
   // 总帧数少（≤120）不压缩：每帧一格，收到=绿 没收到=灰
   if (total <= CELLS) {
-    for (let s = 0; s < total; s++) {
+    for (let i = 0; i < total; i++) {
+      const s = first + i;
       const div = document.createElement('div');
       div.className = 'ft' + (seqs.has(s) ? ' got' : '');
-      const pct = Math.floor((s / total) * 100);
+      const pct = Math.floor((i / total) * 100);
       div.title = `帧 ${s} · ${pct}%`;
       div.addEventListener('click', (e) => {
         const tip = $('blk-tip') as HTMLElement;
@@ -244,8 +258,8 @@ function renderFrameTimeline() {
       const to = Math.min(total, Math.floor((c + 1) * bucket));
       const count = to - from;
       let gotCount = 0;
-      for (let s = from; s < to; s++) {
-        if (seqs.has(s)) gotCount++;
+      for (let i = from; i < to; i++) {
+        if (seqs.has(first + i)) gotCount++;
       }
       // 三态：全收=绿 部分=橙 无=灰
       const cls = gotCount === 0 ? 'ft' : gotCount >= count ? 'ft got' : 'ft partial';
@@ -253,10 +267,12 @@ function renderFrameTimeline() {
       div.className = cls;
       const pctLow = Math.floor((from / total) * 100);
       const pctHigh = Math.ceil((to / total) * 100);
-      div.title = `帧 ${from}-${to} · ${pctLow}-${pctHigh}% · 收到 ${gotCount}/${count}`;
+      const absFrom = first + from;
+      const absTo = first + to;
+      div.title = `帧 ${absFrom}-${absTo} · ${pctLow}-${pctHigh}% · 收到 ${gotCount}/${count}`;
       div.addEventListener('click', (e) => {
         const tip = $('blk-tip') as HTMLElement;
-        tip.textContent = `帧 ${from}-${to} · ${pctLow}-${pctHigh}% · 收到 ${gotCount}/${count}`;
+        tip.textContent = `帧 ${absFrom}-${absTo} · ${pctLow}-${pctHigh}% · 收到 ${gotCount}/${count}`;
         tip.style.display = 'block';
         tip.style.left = `${e.clientX + 8}px`;
         tip.style.top = `${e.clientY - 30}px`;
@@ -264,10 +280,10 @@ function renderFrameTimeline() {
       timeline.appendChild(div);
     }
   }
-  // 右侧总百分比标签：只统计 0..framesNeeded 范围内的有效帧
+  // 右侧总百分比标签：窗口 first..first+total 内的有效帧
   let inRange = 0;
-  for (let s = 0; s < total; s++) {
-    if (seqs.has(s)) inRange++;
+  for (let i = 0; i < total; i++) {
+    if (seqs.has(first + i)) inRange++;
   }
   const pctTotal = Math.min(100, Math.floor((inRange / total) * 100));
   const pctSpan = document.createElement('span');
