@@ -8,7 +8,30 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build-binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            artifact: wink-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            artifact: wink-linux-aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+        working-directory: sender-cli
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: sender-cli/target/${{ matrix.target }}/release/wink
+          if-no-files-found: error
+
+  build-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,27 +39,34 @@ jobs:
         with:
           node-version: 22
       - run: npm ci || npm install
-      # 1. 单 HTML 发送端
       - run: npx vite build --config sender-web/vite.config.ts
-      # 2. Linux 静态二进制
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
         with:
-          targets: x86_64-unknown-linux-musl
-      - run: cargo build --release --target x86_64-unknown-linux-musl
-        working-directory: sender-cli
+          name: wink-sender-html
+          path: sender-web/dist/index.html
+          if-no-files-found: error
 
-      - name: Assemble release artifacts (2 files)
+  release:
+    needs: [build-binaries, build-web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/bin
+      - name: Assemble final artifacts
         run: |
-          mkdir -p dist/release
-          cp sender-cli/target/x86_64-unknown-linux-musl/release/wink dist/release/wink-linux-x86_64
-          cp sender-web/dist/index.html dist/release/wink-sender.html
-          cd dist/release
-          sha256sum * > SHA256SUMS.txt
+          cd dist/bin
+          mv wink-linux-x86_64/wink wink-linux-x86_64
+          mv wink-linux-aarch64/wink wink-linux-aarch64
+          mv wink-sender-html/index.html wink-sender.html
+          chmod +x wink-linux-*
           echo "=== release artifacts ==="
           ls -la
-          file wink-linux-x86_64 | grep -o 'statically linked\|static-pie'
+          file wink-linux-* | grep -o 'statically linked\|static-pie'
+          sha256sum * > SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/release/*
+          files: dist/bin/*
           draft: true

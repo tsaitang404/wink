@@ -19,19 +19,22 @@ jobs:
 
   rust:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-          targets: x86_64-unknown-linux-musl
+          targets: ${{ matrix.target }}
       - run: cargo fmt --check
         working-directory: sender-cli
       - run: cargo clippy -- -D warnings
         working-directory: sender-cli
       - run: cargo test
         working-directory: sender-cli
-      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - run: cargo build --release --target ${{ matrix.target }}
         working-directory: sender-cli
 
   web:
