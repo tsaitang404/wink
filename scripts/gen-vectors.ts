@@ -25,7 +25,8 @@ function hex64(f: number): string {
   const lines: string[] = ['x\tdlog_hex'];
   for (let i = 0; i < 500; i++) {
     const x = 0.25 + (i / 499) * 1000; // 0.25 .. 1000.25
-    lines.push(`${x.toFixed(6)}\t${hex64(dlog(x))}`);
+    // toPrecision(17) 保留完整 f64 精度，Rust 解析后与 TS 逐位一致
+    lines.push(`${x.toPrecision(17)}\t${hex64(dlog(x))}`);
   }
   writeFileSync(join(outDir, 'dlog-vector.tsv'), lines.join('\n') + '\n');
   console.log('dlog-vector.tsv:', lines.length - 1, 'values');
