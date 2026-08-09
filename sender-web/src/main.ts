@@ -82,9 +82,9 @@ function currentParams() {
   const fps = Number(($('fps') as HTMLInputElement).value);
   const qrVersion = Number(($('qr-size') as HTMLSelectElement).value);
   const payloadCap = QR_CAPACITY[qrVersion]! - HEADER_LEN;
-  // 块长自动优化：取帧载荷的 1/8（保证每帧能 XOR 多个块，喷泉效率高）
-  // 上限 512 避免块数太少；下限 64 避免块数爆炸
-  const blockLen = Math.min(512, Math.max(64, Math.floor(payloadCap / 8)));
+  // 块长自动优化：尽量填满 QR 容量（pad 最少，QR 变化明显）。
+  // LT degree 不影响帧大小（一帧始终 blockLen 字节），所以 blockLen 可直接 = 容量
+  const blockLen = Math.max(64, payloadCap);
   return { fps, qrVersion, blockLen, payloadCap };
 }
 

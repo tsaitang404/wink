@@ -85,8 +85,9 @@ fn main() {
         .subsec_nanos()
         % 0xffff) as u16;
 
-    // 4. 块长：不传则自动优化 —— 按帧载荷估算（保证每帧能 XOR 多个块）
-    //    指定 -v<N> 时按该版本容量；否则按终端宽度选最大可容纳版本
+    // 4. 块长：不传则自动优化 —— 尽量填满所选 QR 版本容量（pad 最少，QR 变化明显）
+    //    关键：LT 的 degree 不影响帧大小（一帧始终 block_len 字节，XOR 任意个块长度不变），
+    //    所以 block_len 可以 = 容量，每帧装满，数据区几乎全变
     let block_len = block_len.unwrap_or_else(|| {
         let version = qr_version.unwrap_or_else(|| {
             let cols = terminal_cols().unwrap_or(80);
@@ -94,8 +95,9 @@ fn main() {
             let max_modules = ((cols as usize) * 2).saturating_sub(8).clamp(21, 177);
             ((max_modules - 17) / 4).clamp(1, 40) as u32
         });
-        let payload_cap = qr_capacity_l(version as usize);
-        payload_cap.div_ceil(8).clamp(64, 512)
+        let capacity = qr_capacity_l(version as usize);
+        // 满容量：capacity - 帧头(20)，下限 64
+        capacity.saturating_sub(20).max(64)
     });
 
     // 5. 元信息 QR（返回实际使用的 QR 版本号）
