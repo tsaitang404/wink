@@ -29,7 +29,9 @@
 双击打开 `wink-sender.html` → 选文件 → 调整参数 → 点"开始传输"。
 
 ### 手机接收
-手机浏览器打开接收页（部署到 https 或局域网）→ 启动摄像头 → 对准发送端二维码。
+手机浏览器打开 **https://tsaitang404.github.io/wink/**（GitHub Pages 自动部署，每次 push 自动更新）→ 启动摄像头 → 对准发送端二维码。
+
+> 或本地运行：`npx vite build --config receiver/vite.config.ts && npx vite preview --config receiver/vite.config.ts`
 
 ## 核心特性
 

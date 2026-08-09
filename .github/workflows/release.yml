@@ -16,22 +16,25 @@ jobs:
         with:
           node-version: 22
       - run: npm ci || npm install
+      # 1. 单 HTML 发送端
       - run: npx vite build --config sender-web/vite.config.ts
+      # 2. Linux 静态二进制
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
       - run: cargo build --release --target x86_64-unknown-linux-musl
         working-directory: sender-cli
 
-      - name: Assemble artifacts
+      - name: Assemble release artifacts (2 files)
         run: |
           mkdir -p dist/release
           cp sender-cli/target/x86_64-unknown-linux-musl/release/wink dist/release/wink-linux-x86_64
           cp sender-web/dist/index.html dist/release/wink-sender.html
-          cp receiver/dist/index.html dist/release/wink-receiver.html 2>/dev/null || true
           cd dist/release
           sha256sum * > SHA256SUMS.txt
+          echo "=== release artifacts ==="
           ls -la
+          file wink-linux-x86_64 | grep -o 'statically linked\|static-pie'
 
       - uses: softprops/action-gh-release@v2
         with:
