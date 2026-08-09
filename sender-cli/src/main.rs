@@ -1,6 +1,7 @@
 // wink —— wink 光学文件传输（终端发送端）
 //
-// 流程：wink send <file> → 显示元信息 QR → 按回车开始 → 喷泉帧流
+// 流程：wink <file> → 显示元信息 QR → 按空格开始 → 喷泉帧流
+// 播放中：空格暂停/继续，b<块号>跳块、<帧号>跳帧、N%跳百分比（均暂停），q 退出
 // 发送端零依赖：musl 静态编译单文件
 //
 // clippy 说明：协议字段是 u16/u32，文件大小 cast 截断受协议约束（受 65535 块 × 块长限制），
@@ -30,13 +31,18 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 || args[1] != "send" {
+    if args.len() < 2 {
         print_usage();
         exit(1);
     }
-    let path = &args[2];
+    // 用法：wink <file> [--fps 30] [--block N]  （无 send 子命令）
+    let path = &args[1];
     let fps: u32 = parse_arg(&args, "--fps", 30);
-    let block_len: usize = parse_arg(&args, "--block", 128) as usize;
+    let block_len: Option<usize> = args
+        .iter()
+        .position(|a| a == "--block")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok());
 
     // 1. 读文件
     let data = match std::fs::read(path) {
@@ -69,7 +75,18 @@ fn main() {
         .subsec_nanos()
         % 0xffff) as u16;
 
-    // 4. 元信息 QR
+    // 4. 块长：不传则自动优化 —— 按帧载荷估算（保证每帧能 XOR 多个块）
+    //    终端 ANSI 每行 = 2 模块宽（半块字符），按可用列数推最大 QR 版本
+    let cols = terminal_cols().unwrap_or(80);
+    let block_len = block_len.unwrap_or_else(|| {
+        // 可用模块宽 = 列数 × 2（半块字符），减安静区；换算版本 vN = (模块数-17)/4
+        let max_modules = ((cols as usize) * 2).saturating_sub(8).clamp(21, 177);
+        let max_version = ((max_modules - 17) / 4).clamp(1, 40);
+        let payload_cap = qr_capacity_l(max_version);
+        payload_cap.div_ceil(8).clamp(64, 512)
+    });
+
+    // 5. 元信息 QR
     let manifest = build_manifest_bytes(name_bytes, &container, session_id, fps, block_len);
     let (manifest_ansi, _v) = qr::render_ansi(&manifest, 2);
 
@@ -82,12 +99,12 @@ fn main() {
 
     loop {
         // 显示元信息 QR（在主屏幕，不用备用屏）
-        eprintln!("📡 元信息 QR —— 接收端扫码预览，按 Enter 开始（q 退出）");
+        eprintln!("📡 元信息 QR —— 接收端扫码预览，按空格开始（q 退出）");
         print!("{manifest_ansi}");
         std::io::stdout().flush().ok();
 
-        // 等待 Enter（q 直接退出）
-        if !wait_enter_or_q() {
+        // 等待空格开始（q 直接退出）
+        if !wait_space_or_q() {
             clear_screen();
             eprintln!(
                 "👋 已退出 · 共发送 {total_sent} 帧 · {}s",
@@ -100,26 +117,21 @@ fn main() {
         enter_alt_screen();
         let termios = enter_raw_mode();
         eprintln!("\n🚀 开始传输 @ {fps}fps —— 底部输入命令");
-        eprintln!("  block N = 重播第 N 块 · 纯数字 = 固定该帧 · N% = 从 N% 位置开始 · q = 停止");
+        eprintln!("  空格=暂停/继续 · b<块号>=跳块并暂停 · f<帧号>=跳帧并暂停 · N%=跳百分比并暂停 · q=退出");
         let start = std::time::Instant::now();
         let mut seq: u32 = 0;
 
         loop {
-            let block = enc.encode(seq);
-            let header = FrameHeader {
-                session_id,
+            render_frame(
+                &enc,
                 seq,
-                k: enc.k as u16,
-                block_len: block_len as u16,
+                session_id,
+                block_len,
                 total_len,
                 payload_fnv,
-            };
-            let frame = pack_frame(&header, &block);
-            let (ansi, _v) = qr::render_ansi(&frame, 2);
-            // 光标归位 + 覆盖渲染（不滚动），不用清屏避免闪烁
-            print!("\x1b[H{ansi}");
-            print_status(seq, enc.k, fps, start.elapsed());
-            std::io::stdout().flush().ok();
+                fps,
+                start.elapsed(),
+            );
 
             // 读命令行（有输入才处理，无输入立即返回）
             if let Some(raw_cmd) = read_command_line() {
@@ -149,31 +161,27 @@ fn main() {
                     }
                 } else if cmd == "q" {
                     break;
-                } else if let Some(n) = cmd.strip_prefix("block ") {
-                    if let Ok(b) = n.trim().parse::<usize>() {
+                } else if let Some(bs) = cmd.strip_prefix('b') {
+                    // 块跳转：b<块号>（无空格，避免与暂停空格冲突）
+                    if let Ok(b) = bs.trim().parse::<usize>() {
                         let s = enc
                             .find_deg1_seq(b, seq, 8192)
                             .or_else(|| enc.find_any_seq(b, seq, 65536));
                         if let Some(s) = s {
-                            eprintln!("\x1b[K🔁 重播块 #{b}（帧 {s}）10 次");
-                            for _ in 0..10 {
-                                let rb = enc.encode(s);
-                                let rh = FrameHeader {
-                                    session_id,
-                                    seq: s,
-                                    k: enc.k as u16,
-                                    block_len: block_len as u16,
-                                    total_len,
-                                    payload_fnv,
-                                };
-                                let rf = pack_frame(&rh, &rb);
-                                let (ransi, _v) = qr::render_ansi(&rf, 2);
-                                print!("\x1b[H{ransi}");
-                                print_status(s, enc.k, fps, start.elapsed());
-                                std::io::stdout().flush().ok();
-                                std::thread::sleep(std::time::Duration::from_secs_f64(
-                                    1.0 / f64::from(fps),
-                                ));
+                            seq = s;
+                            eprintln!("\x1b[K⏭ 已显示块 #{b} 的帧 {s} —— 按空格继续");
+                            render_frame(
+                                &enc,
+                                s,
+                                session_id,
+                                block_len,
+                                total_len,
+                                payload_fnv,
+                                fps,
+                                start.elapsed(),
+                            );
+                            if !pause_until_space() {
+                                break;
                             }
                         } else {
                             eprintln!("\x1b[K⚠️ 块 #{b} 在 65536 帧内找不到任何包含它的帧");
@@ -183,11 +191,40 @@ fn main() {
                     if let Ok(pct) = p.trim().parse::<u32>() {
                         let total_est = (enc.k as u64 * 115 / 100) as u32;
                         seq = (total_est.saturating_mul(pct) / 100).max(1);
-                        eprintln!("\x1b[K⏭ 跳到 {pct}%（帧 {seq}）继续");
+                        eprintln!("\x1b[K⏭ 已显示 {pct}%（帧 {seq}）—— 按空格继续");
+                        render_frame(
+                            &enc,
+                            seq,
+                            session_id,
+                            block_len,
+                            total_len,
+                            payload_fnv,
+                            fps,
+                            start.elapsed(),
+                        );
+                        if !pause_until_space() {
+                            break;
+                        }
                     }
-                } else if let Ok(n) = cmd.parse::<u32>() {
-                    seq = n;
-                    eprintln!("\x1b[K📌 固定帧 {n} 连续播放");
+                } else if let Some(fs) = cmd.strip_prefix('f') {
+                    // 帧跳转：f<帧号>（无空格，与暂停空格区分）
+                    if let Ok(n) = fs.trim().parse::<u32>() {
+                        seq = n;
+                        eprintln!("\x1b[K⏭ 已显示帧 {n} —— 按空格继续");
+                        render_frame(
+                            &enc,
+                            seq,
+                            session_id,
+                            block_len,
+                            total_len,
+                            payload_fnv,
+                            fps,
+                            start.elapsed(),
+                        );
+                        if !pause_until_space() {
+                            break;
+                        }
+                    }
                 }
             }
             std::thread::sleep(std::time::Duration::from_secs_f64(1.0 / f64::from(fps)));
@@ -211,11 +248,18 @@ fn print_usage() {
         "wink {VERSION} — 对镜头 wink 传输文件\n\
          \n\
          用法:\n\
-         \x20 wink send <file> [--fps 30] [--block 128]\n\
+         \x20 wink <file> [--fps 30] [--block N]\n\
          \n\
          选项:\n\
          \x20 --fps 1-60   帧率（默认 30）\n\
-         \x20 --block N    块长字节（默认 128）"
+         \x20 --block N    块长字节（默认按终端宽度自动优化）\n\
+         \n\
+         播放中:\n\
+         \x20 空格      暂停/继续\n\
+         \x20 b<块号>    跳到含该块的帧并暂停（如 b3）\n\
+         \x20 f<帧号>    跳到指定帧并暂停（如 f42）\n\
+         \x20 <百分比>%  从该百分比位置开始并暂停\n\
+         \x20 q          退出"
     );
 }
 
@@ -383,9 +427,53 @@ fn read_command_line() -> Option<String> {
     }
 }
 
-/// 等待 Enter（返回 true）或 q（返回 false）。canonical 模式行缓冲即可。
+/// 渲染指定帧到备用屏（光标归位覆盖，不滚动）
+#[allow(clippy::too_many_arguments)]
+fn render_frame(
+    enc: &LTEncoder,
+    seq: u32,
+    session_id: u16,
+    block_len: usize,
+    total_len: u32,
+    payload_fnv: u32,
+    fps: u32,
+    elapsed: std::time::Duration,
+) {
+    let block = enc.encode(seq);
+    let header = FrameHeader {
+        session_id,
+        seq,
+        k: enc.k as u16,
+        block_len: block_len as u16,
+        total_len,
+        payload_fnv,
+    };
+    let frame = pack_frame(&header, &block);
+    let (ansi, _v) = qr::render_ansi(&frame, 2);
+    print!("\x1b[H{ansi}");
+    print_status(seq, enc.k, fps, elapsed);
+    std::io::stdout().flush().ok();
+}
+
+/// 暂停：保持当前帧，等空格/回车继续，q 退出（返回 false 表示要退出）
 #[allow(unsafe_code)]
-fn wait_enter_or_q() -> bool {
+fn pause_until_space() -> bool {
+    eprintln!("\x1b[K⏸ 已暂停 —— 按空格继续（q 退出）");
+    loop {
+        match read_command_line() {
+            Some(c) if c.trim() == " " || c.trim() == "p" || c.trim().is_empty() => {
+                eprintln!("\x1b[K🚀 继续传输");
+                return true;
+            }
+            Some(c) if c.trim() == "q" => return false,
+            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+}
+
+/// 等待空格（返回 true）或 q（返回 false）。raw mode 单键。
+#[allow(unsafe_code)]
+fn wait_space_or_q() -> bool {
     use std::os::fd::AsRawFd;
     let fd = std::io::stdin().as_raw_fd();
     let mut termios: libc::termios = unsafe { std::mem::zeroed() };
@@ -407,4 +495,35 @@ fn wait_enter_or_q() -> bool {
         return false;
     }
     buf[0] != b'q'
+}
+
+/// 终端列数（TIOCGWINSZ），失败返回 None
+#[allow(unsafe_code)]
+fn terminal_cols() -> Option<u16> {
+    use std::os::fd::AsRawFd;
+    let fd = std::io::stdout().as_raw_fd();
+    let mut ws = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let r = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &raw mut ws) };
+    if r == 0 && ws.ws_col > 0 {
+        Some(ws.ws_col)
+    } else {
+        None
+    }
+}
+
+/// QR 版本 → byte mode ECC L 容量（标准表 v1-v40，与 TS `QR_CAPACITY` 一致）
+fn qr_capacity_l(version: usize) -> usize {
+    const CAP: [usize; 40] = [
+        17, 32, 53, 78, 106, 134, 154, 192, 230, 271, 321, 367, 425, 458, 520, 586, 644, 718, 792,
+        858, 929, 1003, 1091, 1171, 1273, 1367, 1465, 1528, 1628, 1732, 1840, 1952, 2068, 2188,
+        2303, 2431, 2563, 2699, 2809, 2953,
+    ];
+    CAP.get(version.saturating_sub(1).min(39))
+        .copied()
+        .unwrap_or(2953)
 }

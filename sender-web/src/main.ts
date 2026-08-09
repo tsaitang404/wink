@@ -9,12 +9,12 @@ const $ = (id: string) => document.getElementById(id)!;
 const canvas = $('qr') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 
-// QR 版本 → payload 容量（byte mode, ECC L）
+// QR 版本 → payload 容量（byte mode, ECC L，标准 v1-v40）
 const QR_CAPACITY: Record<number, number> = {
-  15: 539,
-  20: 858,
-  27: 1465,
-  40: 2953,
+  1: 17, 2: 32, 3: 53, 4: 78, 5: 106, 6: 134, 7: 154, 8: 192, 9: 230, 10: 271,
+  11: 321, 12: 367, 13: 425, 14: 458, 15: 520, 16: 586, 17: 644, 18: 718, 19: 792, 20: 858,
+  21: 929, 22: 1003, 23: 1091, 24: 1171, 25: 1273, 26: 1367, 27: 1465, 28: 1528, 29: 1628, 30: 1732,
+  31: 1840, 32: 1952, 33: 2068, 34: 2188, 35: 2303, 36: 2431, 37: 2563, 38: 2699, 39: 2809, 40: 2953,
 };
 
 let fileBytes: Uint8Array | null = null;
@@ -93,11 +93,12 @@ function qrSegments(bytes: Uint8Array): Array<{ data: Uint8Array; mode: 'byte' }
   return [{ data: bytes, mode: 'byte' }];
 }
 
-async function drawQr(bytes: Uint8Array) {
+async function drawQr(bytes: Uint8Array, qrVersion?: number) {
   await QRCode.toCanvas(canvas, qrSegments(bytes) as never, {
     errorCorrectionLevel: 'L',
     margin: 2,
     width: 400,
+    version: qrVersion,
   });
 }
 
