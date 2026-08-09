@@ -1,0 +1,13 @@
+# --- Node / TS ---
+node_modules/
+dist/
+dist-standalone/
+*.local
+coverage/
+
+# --- Rust ---
+target/
+
+# --- misc ---
+.DS_Store
+*.log

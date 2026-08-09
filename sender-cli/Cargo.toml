@@ -1,0 +1,32 @@
+[package]
+name = "wink"
+version = "0.1.0"
+edition = "2021"
+description = "眨眼式光学文件传输：终端对摄像头眨眼传文件"
+license = "MIT"
+
+[dependencies]
+qrcode = "0.14"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
+
+# 编码规范（见 .hermes/plans/2026-08-09_wink-coding-standards.md）
+# cargo clippy -- -D warnings 必须零警告
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
