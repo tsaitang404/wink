@@ -22,10 +22,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Install C toolchains (musl for lzma-sys)
+      - name: Install C toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools gcc-aarch64-linux-gnu
+          sudo apt-get install -y musl-tools
       - name: Configure musl linker (x86_64)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
@@ -34,13 +34,15 @@ jobs:
           [target.x86_64-unknown-linux-musl]
           linker = "musl-gcc"
           EOF
-      - name: Configure aarch64 linker
+      - name: Install aarch64 musl toolchain (musl.cc)
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: |
+          mkdir -p /opt/musl-aarch64
+          curl -L https://musl.cc/aarch64-linux-musl-cross.tgz | tar -xz -C /opt/musl-aarch64 --strip-components=1
           mkdir -p .cargo
           cat >> .cargo/config.toml <<'EOF'
           [target.aarch64-unknown-linux-musl]
-          linker = "aarch64-linux-gnu-gcc"
+          linker = "/opt/musl-aarch64/bin/aarch64-linux-musl-gcc"
           EOF
       - run: cargo build --release --target ${{ matrix.target }}
         working-directory: sender-cli
