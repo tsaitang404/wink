@@ -86,8 +86,8 @@
     </div>
 
     <div id="sender-progress-wrap" style="display:none;width:100%;max-width:420px;margin:8px 0">
-      <div class="param-row"><span>帧进度（拖动从对应帧开始）</span><span id="seq-label">0 / 0</span></div>
-      <input type="range" id="seq-slider" min="0" max="1000" value="0" style="width:100%" />
+      <div class="param-row"><span>帧进度（参考）</span><span id="seq-label">0 / ~0</span></div>
+      <div class="progress-bar" id="sender-bar"><div class="progress-fill" id="sender-fill" style="width:0%"></div></div>
       <div class="param-row"><span>块操作</span></div>
       <div style="display:flex;gap:6px;align-items:center">
         <input type="number" id="block-input" min="0" placeholder="块号" style="flex:1;background:#1d1d1d;border:1px solid #333;border-radius:6px;padding:6px 8px;color:#ddd;font-size:13px" />

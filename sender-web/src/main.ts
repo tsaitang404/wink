@@ -202,37 +202,19 @@ function resendBlock(b: number) {
   }, 1000 / fps);
 }
 
-/** 总帧进度：可拖动，拖动后从对应帧开始继续播放 */
+/** 帧进度（只读参考）：当前 seq / 期望总帧数 ~1.15K，无操控 */
 let totalFrames = 0;
-let sliderBound = false;
 function setupSeqSlider(k: number) {
   totalFrames = Math.ceil(k * 1.15);
-  const slider = $('seq-slider') as HTMLInputElement;
-  slider.max = String(Math.max(100, totalFrames));
-  slider.value = '0';
-  $('seq-label').textContent = `0 / ${totalFrames}`;
-  if (!sliderBound) {
-    sliderBound = true;
-    slider.addEventListener('input', () => {
-      const target = Number(slider.value) >>> 0;
-      $('seq-label').textContent = `${target} / ${totalFrames}`;
-      // 拖动时若在传输中，跳到该帧继续（下一 tick 用新 seq 渲染）
-      if (streaming && encoder) {
-        seq = target;
-        $('status').textContent = `⏭ 跳到帧 ${target} 继续`;
-      }
-    });
-  }
+  updateSeqSlider(0);
 }
 
 function updateSeqSlider(s: number) {
-  const slider = $('seq-slider') as HTMLInputElement;
-  if (!slider) return;
-  if (document.activeElement === slider) return; // 拖动中不覆盖
-  // 总帧数进度：seq 单调增长，进度 = seq/总帧数（不取模，到 100% 后保持）
-  const shown = Math.min(s, totalFrames);
-  slider.value = String(shown);
-  $('seq-label').textContent = `${s} / ${totalFrames}`;
+  const label = $('seq-label');
+  // 进度条宽度 = seq/期望总帧数（单调，超过后保持 100%）
+  const pct = Math.min(100, (s / Math.max(1, totalFrames)) * 100);
+  $('sender-fill').style.width = `${pct}%`;
+  label.textContent = `${s} / ~${totalFrames}`;
 }
 
 /** 块输入框：从此块开始 / 重播此块 */

@@ -293,18 +293,19 @@ function renderFrameTimeline() {
 }
 
 function updateProgress(dec: LTDecoder, got: number) {
-  const pct = Math.min(100, (got / framesNeeded) * 100);
+  // 主进度 = 块进度（真实、确定）：已解块/总块数
+  const pct = Math.min(100, (dec.solvedCount / Math.max(1, dec.k)) * 100);
   $('progress-fill').style.width = `${pct}%`;
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(0);
-  // 有效帧 = 新帧（去重后）；无效帧 = 重复帧；总收 = 有效+无效
+  // 有效帧 = 新帧（去重后）；无效帧 = 重复帧；总收 = 有效+无效（帧只作估计参考）
   const valid = dec.framesNew;
   const invalid = dec.framesDup;
   const totalGot = valid + invalid;
   $('progress-stats').textContent =
-    `有效 ${valid}/${framesNeeded} · 无效 ${invalid} · 总收 ${totalGot} · 已解块 ${dec.solvedCount}/${dec.k} · ${elapsed}s`;
+    `块 ${dec.solvedCount}/${dec.k} (${pct.toFixed(0)}%) · 帧 ${valid}/期望~${framesNeeded} · 无效 ${invalid} · 总收 ${totalGot} · ${elapsed}s`;
   // 码率检测：总平均速度
   updateFpsHint(dec);
-  // 帧时间线（按 seq 顺序，单行自适应宽度）
+  // 帧时间线（丢帧诊断，非进度）
   renderFrameTimeline();
   // 块网格：真实 K 块逐块三色（灰=未收 橙=收到未解出 绿=已解出）
   const grid = $('block-grid');
@@ -344,16 +345,12 @@ async function onComplete(container: Uint8Array) {
       setStatus('❌ SHA-256 校验失败，文件损坏！');
       return;
     }
-    // 完成时进度条/位图强制 100% 全绿（可能早于 1.15K 帧解完）
+    // 完成标准 = 块全部解出（进度条基于块，此时必为 100%）
     $('progress-fill').style.width = '100%';
+    const valid = decoder?.framesNew ?? 0;
     $('progress-stats').textContent =
-      `✅ 有效 ${decoder?.framesNew ?? 0}/${framesNeeded} · 无效 ${decoder?.framesDup ?? 0} · 总收 ${(decoder?.framesNew ?? 0) + (decoder?.framesDup ?? 0)} · 已解块 ${decoder?.solvedCount ?? 0}/${decoder?.k ?? 0} · 完成`;
-    const timeline = $('frame-timeline');
-    for (const child of Array.from(timeline.children)) {
-      if (child.classList.contains('ft')) child.className = 'ft got';
-    }
-    const pctSpan = timeline.querySelector('.ft-pct');
-    if (pctSpan) pctSpan.textContent = '100%';
+      `✅ 完成 · 块 ${decoder?.solvedCount ?? 0}/${decoder?.k ?? 0} (100%) · 帧 ${valid}/期望~${framesNeeded} · 无效 ${decoder?.framesDup ?? 0} · 总收 ${valid + (decoder?.framesDup ?? 0)}`;
+    // 块网格已全绿（真实解出状态）；帧位图如实保留（诊断用）
     showResult(file.name, file.type, file.bytes);
   } catch (e) {
     setStatus(`❌ 解析失败: ${(e as Error).message}`);
