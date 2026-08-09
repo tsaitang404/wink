@@ -38,7 +38,11 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: |
           mkdir -p /opt/musl-aarch64
-          curl -L https://musl.cc/aarch64-linux-musl-cross.tgz | tar -xz -C /opt/musl-aarch64 --strip-components=1
+          for i in 1 2 3; do
+            curl -L --retry 3 --connect-timeout 30 -o /tmp/musl-aarch64.tgz https://musl.cc/aarch64-linux-musl-cross.tgz && break
+            sleep 5
+          done
+          tar -xz -C /opt/musl-aarch64 --strip-components=1 -f /tmp/musl-aarch64.tgz
           mkdir -p .cargo
           cat >> .cargo/config.toml <<'EOF'
           [target.aarch64-unknown-linux-musl]
@@ -46,6 +50,9 @@ jobs:
           EOF
       - run: cargo build --release --target ${{ matrix.target }}
         working-directory: sender-cli
+        env:
+          CC_aarch64_unknown_linux_musl: /opt/musl-aarch64/bin/aarch64-linux-musl-gcc
+          AR_aarch64_unknown_linux_musl: /opt/musl-aarch64/bin/aarch64-linux-musl-ar
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
