@@ -97,9 +97,8 @@
       <div style="display:flex;gap:6px;align-items:center">
         <input type="number" id="block-input" min="0" placeholder="块号" style="flex:1;background:#1d1d1d;border:1px solid #333;border-radius:6px;padding:6px 8px;color:#ddd;font-size:13px" />
         <button id="block-start" class="btn ghost" style="padding:6px 10px">从此块开始</button>
-        <button id="block-resend" class="btn ghost" style="padding:6px 10px">重播此块</button>
       </div>
-      <div class="hint">块号 0-(K-1)：从此块开始 = 跳到该块的帧继续流；重播此块 = 连续发送该块 10 次</div>
+      <div class="hint">块号 0-(K-1)：从此块开始 = 跳到该块的帧并暂停（该帧含此块，接收端读取可推进）</div>
     </div>
 
     <div id="seq-tip" class="seq-tip"></div>

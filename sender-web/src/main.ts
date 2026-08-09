@@ -144,15 +144,21 @@ function startStream() {
   const { fps } = currentParams();
   streamTimer = setInterval(() => {
     if (!encoder) return;
-    const block = encoder.encode(seq);
-    const frame = packFrame(
-      { sessionId, seq, k: encoder.k, blockLen: currentParams().blockLen, totalLen: container!.length, payloadFnv: fnv1a(container!) },
-      block,
-    );
-    void drawQr(frame);
-    updateSeqSlider(seq);
+    renderFrameAt(seq);
     seq = (seq + 1) >>> 0;
   }, 1000 / fps);
+}
+
+/** 渲染指定 seq 的帧到二维码 + 更新进度条（暂停时跳帧用，立即显示目标帧） */
+function renderFrameAt(s: number) {
+  if (!encoder || !container) return;
+  const block = encoder.encode(s);
+  const frame = packFrame(
+    { sessionId, seq: s, k: encoder.k, blockLen: currentParams().blockLen, totalLen: container.length, payloadFnv: fnv1a(container) },
+    block,
+  );
+  void drawQr(frame);
+  updateSeqSlider(s);
 }
 
 /** 暂停：停住当前帧（保持显示），操作后对焦用 */
@@ -192,41 +198,6 @@ function start() {
 
 /** 重发指定块：优先找该块的 degree-1 帧（必解出），找不到降级为包含帧（概率推进） */
 let resendTimer: ReturnType<typeof setInterval> | null = null;
-function resendBlock(b: number) {
-  if (!encoder || !container) return;
-  let s = encoder.findDeg1Seq(b, seq);
-  let mode = 'd1';
-  if (s === null) {
-    s = encoder.findAnySeq(b, seq, 65536);
-    mode = 'any';
-    if (s === null) {
-      $('status').textContent = `⚠️ 块 ${b}：65536 帧内未找到任何包含它的帧`;
-      return;
-    }
-  }
-  // 中断当前流 10 帧，发送该块重试
-  if (streamTimer) clearInterval(streamTimer);
-  if (resendTimer) clearInterval(resendTimer);
-  const { fps } = currentParams();
-  const label = mode === 'd1' ? '直投帧' : '包含帧(概率)';
-  let n = 0;
-  resendTimer = setInterval(() => {
-    const block = encoder!.encode(s);
-    const frame = packFrame(
-      { sessionId, seq: s!, k: encoder!.k, blockLen: currentParams().blockLen, totalLen: container!.length, payloadFnv: fnv1a(container!) },
-      block,
-    );
-    void drawQr(frame);
-    $('status').textContent = `🔁 重发块 #${b}（${label} 帧 ${s}）… ${n + 1}/10`;
-    n++;
-    if (n >= 10) {
-      if (resendTimer) clearInterval(resendTimer);
-      // 重播完成 → 暂停（留时间对焦，手动继续）
-      paused = true;
-      $('status').textContent = `🔁 重播块 #${b} 完成 —— 点击二维码或按空格继续`;
-    }
-  }, 1000 / fps);
-}
 
 /** 帧进度：可点击/拖动跳转，播放完循环（进度从零开始） */
 let totalFrames = 0;
@@ -250,7 +221,7 @@ function setupSeqSlider(k: number) {
       const ratio = target / Math.max(1, totalFrames);
       tip.style.left = `${rect.left + rect.width * ratio - 30}px`;
       tip.style.top = `${rect.top - 28}px`;
-      // 拖动时若在传输中：跳到该帧并暂停（留时间对焦）
+      // 拖动时：跳到该帧并暂停，且立即渲染目标帧（暂停中也能看到对应帧）
       if (streaming && encoder) {
         seq = target;
         if (!paused) {
@@ -258,7 +229,8 @@ function setupSeqSlider(k: number) {
           if (streamTimer) clearInterval(streamTimer);
           if (resendTimer) clearInterval(resendTimer);
         }
-        $('status').textContent = `⏭ 跳到帧 ${target} (${pct}%) —— 点击二维码或按空格继续`;
+        renderFrameAt(seq);
+        $('status').textContent = `⏭ 已显示帧 ${target} (${pct}%) —— 点击二维码或按空格继续`;
       }
     });
     slider.addEventListener('change', () => {
@@ -278,8 +250,8 @@ function updateSeqSlider(s: number) {
   label.textContent = `${cycle} / ~${totalFrames}`;
 }
 
-/** 块输入框：从此块开始 / 重播此块 */
-function blockFromInput(mode: 'start' | 'resend') {
+/** 块输入框：从此块开始 —— 跳到该块的帧，暂停并立即显示 */
+function blockFromInput() {
   const input = $('block-input') as HTMLInputElement;
   const b = Number(input.value);
   if (!Number.isInteger(b) || !encoder || b < 0 || b >= encoder.k) {
@@ -292,18 +264,15 @@ function blockFromInput(mode: 'start' | 'resend') {
     $('status').textContent = `⚠️ 块 ${b}：65536 帧内未找到任何包含它的帧`;
     return;
   }
-  if (mode === 'start') {
-    // 从此块开始：跳到该块的帧，暂停留对焦时间
-    seq = s;
-    if (!paused) {
-      paused = true;
-      if (streamTimer) clearInterval(streamTimer);
-      if (resendTimer) clearInterval(resendTimer);
-    }
-    $('status').textContent = `⏭ 从块 #${b} 开始（帧 ${s}）—— 点击二维码或按空格继续`;
-  } else {
-    resendBlock(b);
+  // 跳到该块的帧，暂停并立即渲染（暂停中就能看到目标帧，对焦后继续）
+  seq = s;
+  if (!paused) {
+    paused = true;
+    if (streamTimer) clearInterval(streamTimer);
+    if (resendTimer) clearInterval(resendTimer);
   }
+  renderFrameAt(seq);
+  $('status').textContent = `⏭ 已显示块 #${b} 的帧 ${s} —— 点击二维码或按空格继续`;
 }
 
 function stop() {
@@ -318,10 +287,9 @@ function stop() {
 
 $('start-btn').addEventListener('click', start);
 $('stop-btn').addEventListener('click', stop);
-$('block-start').addEventListener('click', () => blockFromInput('start'));
-$('block-resend').addEventListener('click', () => blockFromInput('resend'));
+$('block-start').addEventListener('click', blockFromInput);
 $('block-input').addEventListener('keydown', (e: KeyboardEvent) => {
-  if (e.key === 'Enter') blockFromInput('resend');
+  if (e.key === 'Enter') blockFromInput();
   e.stopPropagation();
 });
 
