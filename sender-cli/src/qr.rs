@@ -6,15 +6,22 @@
     clippy::cast_sign_loss
 )]
 
-use qrcode::{QrCode, Version};
+use qrcode::{EcLevel, QrCode, Version};
 
 /// 把 payload 编码为 QR 并渲染成 ANSI 半块字符（黑白）
+/// `version_hint`：Some(v) 强制指定版本（1-40），None 自动选最小
 /// 返回 (字符串行, 使用的 QR 版本号)
 #[must_use]
-pub fn render_ansi(payload: &[u8], quiet_zone: usize) -> (String, u32) {
-    let code = QrCode::new(payload)
-        .map_err(|e| format!("payload too large for any QR version: {e}"))
-        .unwrap_or_else(|e| panic!("{e}"));
+pub fn render_ansi(payload: &[u8], quiet_zone: usize, version_hint: Option<u32>) -> (String, u32) {
+    let code = match version_hint {
+        Some(v) if (1..=40).contains(&v) => {
+            QrCode::with_version(payload, Version::Normal(v as i16), EcLevel::L)
+                .map_err(|e| format!("payload too large for v{v}: {e}"))
+        }
+        _ => QrCode::with_error_correction_level(payload, EcLevel::L)
+            .map_err(|e| format!("payload too large for any QR version: {e}")),
+    }
+    .unwrap_or_else(|e| panic!("{e}"));
     let version = match code.version() {
         Version::Normal(v) | Version::Micro(v) => v as u32,
     };

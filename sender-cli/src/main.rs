@@ -43,6 +43,11 @@ fn main() {
     // 用法：wink <file> [--fps 30] [--block N]  （无 send 子命令）
     let path = &args[1];
     let fps: u32 = parse_arg(&args, "--fps", 30);
+    // QR 版本：-v<N>（如 -v15 / -v20 / -v40），不传则自动
+    let qr_version: Option<u32> = args
+        .iter()
+        .find_map(|a| a.strip_prefix("-v").and_then(|s| s.parse().ok()))
+        .filter(|v| (1..=40).contains(v));
     let block_len: Option<usize> = args
         .iter()
         .position(|a| a == "--block")
@@ -81,22 +86,26 @@ fn main() {
         % 0xffff) as u16;
 
     // 4. 块长：不传则自动优化 —— 按帧载荷估算（保证每帧能 XOR 多个块）
-    //    终端 ANSI 每行 = 2 模块宽（半块字符），按可用列数推最大 QR 版本
-    let cols = terminal_cols().unwrap_or(80);
+    //    指定 -v<N> 时按该版本容量；否则按终端宽度选最大可容纳版本
     let block_len = block_len.unwrap_or_else(|| {
-        // 可用模块宽 = 列数 × 2（半块字符），减安静区；换算版本 vN = (模块数-17)/4
-        let max_modules = ((cols as usize) * 2).saturating_sub(8).clamp(21, 177);
-        let max_version = ((max_modules - 17) / 4).clamp(1, 40);
-        let payload_cap = qr_capacity_l(max_version);
+        let version = qr_version.unwrap_or_else(|| {
+            let cols = terminal_cols().unwrap_or(80);
+            // 可用模块宽 = 列数 × 2（半块字符），减安静区；换算版本 vN = (模块数-17)/4
+            let max_modules = ((cols as usize) * 2).saturating_sub(8).clamp(21, 177);
+            ((max_modules - 17) / 4).clamp(1, 40) as u32
+        });
+        let payload_cap = qr_capacity_l(version as usize);
         payload_cap.div_ceil(8).clamp(64, 512)
     });
 
-    // 5. 元信息 QR
+    // 5. 元信息 QR（返回实际使用的 QR 版本号）
     let manifest = build_manifest_bytes(name_bytes, &container, session_id, fps, block_len);
-    let (manifest_ansi, _v) = qr::render_ansi(&manifest, 2);
+    let (manifest_ansi, manifest_version) = qr::render_ansi(&manifest, 2, qr_version);
 
-    // 主循环：显示 manifest → 按 Enter 开始帧流 → 按 q 停止回到 manifest
+    // 主循环：显示 manifest → 按空格开始帧流 → 按 q 停止回到 manifest
     let enc = LTEncoder::new(&container, block_len, session_id);
+    let k = enc.k;
+    let total_est = (k as u64 * 115 / 100) as u32;
     let payload_fnv = fnv1a(&container);
     let total_len = container.len() as u32;
     let mut total_sent: u64 = 0;
@@ -106,6 +115,15 @@ fn main() {
         // 显示元信息 QR（在主屏幕，不用备用屏）
         eprintln!("📡 元信息 QR —— 接收端扫码预览，按空格开始（q 退出）");
         print!("{manifest_ansi}");
+        // 配置面板：帧率 / 块长 / QR 版本 / 块数 / 总帧数（期望）
+        eprintln!("──────────────────────────────");
+        eprintln!("  帧率      {fps} fps");
+        eprintln!("  块长      {block_len} B");
+        eprintln!("  QR 版本   v{manifest_version}");
+        eprintln!("  块数      {k} 块");
+        eprintln!("  总帧数    约 {total_est} 帧（期望） · 文件 {total_len} B");
+        eprintln!("  文件名    {name}");
+        eprintln!("──────────────────────────────");
         std::io::stdout().flush().ok();
 
         // 等待空格开始（q 直接退出）
@@ -133,6 +151,7 @@ fn main() {
             total_len,
             payload_fnv,
             fps,
+            qr_version,
             start,
         };
 
@@ -172,11 +191,12 @@ fn print_usage() {
         "wink {VERSION} — 对镜头 wink 传输文件\n\
          \n\
          用法:\n\
-         \x20 wink <file> [--fps 30] [--block N]\n\
+         \x20 wink <file> [--fps 30] [--block N] [-v<N>]\n\
          \n\
          选项:\n\
          \x20 --fps 1-60   帧率（默认 30）\n\
-         \x20 --block N    块长字节（默认按终端宽度自动优化）\n\
+         \x20 --block N    块长字节（默认按二维码容量自动优化）\n\
+         \x20 -v<N>        二维码版本 1-40（如 -v15 / -v20 / -v40，默认自动选最大可容纳）\n\
          \n\
          播放中:\n\
          \x20 空格      暂停/继续\n\
@@ -253,7 +273,15 @@ fn clear_screen() {
 fn print_status(seq: u32, k: usize, fps: u32, elapsed: std::time::Duration) {
     let need = (k as f64 * 1.15) as u32;
     let secs = elapsed.as_secs();
-    eprintln!("\x1b[Kwink · 帧 {seq} · K={k} · 需求≈{need} · {fps}fps · {secs}s · 按 q 停止");
+    // 进度条（与 web 一致）：seq 到总帧数后循环，进度按当前周期
+    let cycle = seq % need.max(1);
+    let pct = (f64::from(cycle) / f64::from(need.max(1))) * 100.0;
+    const W: usize = 20;
+    let filled = ((pct / 100.0) * W as f64).round() as usize;
+    let bar: String = (0..W).map(|i| if i < filled { '█' } else { '░' }).collect();
+    eprintln!(
+        "\x1b[Kwink · 帧 {cycle}/{need} · {bar} {pct:3.0}% · K={k} · 需求≈{need} · {fps}fps · {secs}s · 按 q 停止"
+    );
 }
 
 // ── 终端控制：备用屏幕 + raw mode ─────────────────────────────
@@ -363,6 +391,7 @@ struct CmdCtx<'a> {
     total_len: u32,
     payload_fnv: u32,
     fps: u32,
+    qr_version: Option<u32>,
     start: std::time::Instant,
 }
 
@@ -378,7 +407,7 @@ fn render_frame(ctx: &CmdCtx, seq: u32) {
         payload_fnv: ctx.payload_fnv,
     };
     let frame = pack_frame(&header, &block);
-    let (ansi, _v) = qr::render_ansi(&frame, 2);
+    let (ansi, _v) = qr::render_ansi(&frame, 2, ctx.qr_version);
     print!("\x1b[H{ansi}");
     print_status(seq, ctx.enc.k, ctx.fps, ctx.start.elapsed());
     // 输入回显：状态行下一行显示 `wink> <当前输入>`（打字可见）
