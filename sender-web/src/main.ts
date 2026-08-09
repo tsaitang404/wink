@@ -240,9 +240,10 @@ function updateSeqSlider(s: number) {
   const label = $('seq-label');
   // 循环：seq 到总帧数后归零重新走
   const cycle = s % Math.max(1, totalFrames);
-  const pct = (cycle / Math.max(1, totalFrames)) * 100;
   const slider = $('seq-slider') as HTMLInputElement;
-  if (document.activeElement !== slider) slider.value = String(cycle);
+  // 始终同步 slider.value（程序赋值不触发 input 事件，不影响用户拖动；
+  // 之前 activeElement 检查导致拖动后 focus 残留 → label 归零但滑块不动）
+  slider.value = String(cycle);
   label.textContent = `${cycle} / ~${totalFrames}`;
 }
 
