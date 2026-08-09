@@ -145,7 +145,6 @@ function start() {
   $('stop-btn').style.display = 'inline-block';
   $('sender-progress-wrap').style.display = 'block';
   $('status').textContent = '🚀 传输中… 保持对准';
-  initSenderBlocks(encoder.k);
   setupSeqSlider(encoder.k);
   streamTimer = setInterval(() => {
     if (!encoder) return;
@@ -158,22 +157,6 @@ function start() {
     updateSeqSlider(seq);
     seq = (seq + 1) >>> 0;
   }, 1000 / fps);
-}
-
-/** 发送端块网格：红块=degree-1 未发出（可能未收到），点击重发该块 */
-function initSenderBlocks(k: number) {
-  const grid = $('sender-blocks');
-  grid.innerHTML = '';
-  $('block-count').textContent = `K=${k} 块`;
-  for (let i = 0; i < k; i++) {
-    const d = document.createElement('div');
-    d.className = 'blk snd';
-    d.dataset.idx = String(i);
-    d.style.cssText = 'width:8px;height:8px;border-radius:2px;background:#3a3a3a;cursor:pointer';
-    d.title = `块 ${i}`;
-    d.addEventListener('click', () => resendBlock(i));
-    grid.appendChild(d);
-  }
 }
 
 /** 重发指定块：扫描找到该块的 degree-1 帧 seq，临时连续发送 10 帧 */
@@ -219,19 +202,57 @@ function resendBlock(b: number) {
   }, 1000 / fps);
 }
 
-/** 总帧进度：显示 当前帧/总帧数 + 进度条（总帧 = 预估完成帧 1.15K） */
+/** 总帧进度：可拖动，拖动后从对应帧开始继续播放 */
 let totalFrames = 0;
+let sliderBound = false;
 function setupSeqSlider(k: number) {
   totalFrames = Math.ceil(k * 1.15);
-  updateSeqSlider(0);
+  const slider = $('seq-slider') as HTMLInputElement;
+  slider.max = String(Math.max(100, totalFrames));
+  slider.value = '0';
+  $('seq-label').textContent = `0 / ${totalFrames}`;
+  if (!sliderBound) {
+    sliderBound = true;
+    slider.addEventListener('input', () => {
+      const target = Number(slider.value) >>> 0;
+      $('seq-label').textContent = `${target} / ${totalFrames}`;
+      // 拖动时若在传输中，跳到该帧继续（下一 tick 用新 seq 渲染）
+      if (streaming && encoder) {
+        seq = target;
+        $('status').textContent = `⏭ 跳到帧 ${target} 继续`;
+      }
+    });
+  }
 }
 
 function updateSeqSlider(s: number) {
-  const label = $('seq-label');
-  label.textContent = `${s} / ${totalFrames}`;
-  // 进度条：seq 超过总帧数后取模循环（喷泉码循环发，进度按当前周期）
-  const pct = Math.min(100, ((s % totalFrames) / totalFrames) * 100);
-  $('sender-fill').style.width = `${pct}%`;
+  const slider = $('seq-slider') as HTMLInputElement;
+  if (!slider) return;
+  if (document.activeElement === slider) return; // 拖动中不覆盖
+  slider.value = String(s % (Number(slider.max) + 1));
+  $('seq-label').textContent = `${s % (Number(slider.max) + 1)} / ${totalFrames}`;
+}
+
+/** 块输入框：从此块开始 / 重播此块 */
+function blockFromInput(mode: 'start' | 'resend') {
+  const input = $('block-input') as HTMLInputElement;
+  const b = Number(input.value);
+  if (!Number.isInteger(b) || !encoder || b < 0 || b >= encoder.k) {
+    $('status').textContent = `⚠️ 块号无效（0-${encoder?.k ? encoder.k - 1 : '?'}）`;
+    return;
+  }
+  const s = encoder.findDeg1Seq(b, seq, 8192);
+  if (s === null) {
+    $('status').textContent = `⚠️ 块 ${b}：8192 帧内未找到 degree-1 帧`;
+    return;
+  }
+  if (mode === 'start') {
+    // 从此块开始：跳到该块的 degree-1 帧继续主流
+    seq = s;
+    $('status').textContent = `⏭ 从块 #${b} 开始（帧 ${s}）继续`;
+  } else {
+    resendBlock(b);
+  }
 }
 
 function stop() {
@@ -246,6 +267,11 @@ function stop() {
 
 $('start-btn').addEventListener('click', start);
 $('stop-btn').addEventListener('click', stop);
+$('block-start').addEventListener('click', () => blockFromInput('start'));
+$('block-resend').addEventListener('click', () => blockFromInput('resend'));
+$('block-input').addEventListener('keydown', (e: KeyboardEvent) => {
+  if (e.key === 'Enter') blockFromInput('resend');
+});
 
 // 参数变化时重新渲染 manifest
 for (const id of ['fps', 'qr-size']) {

@@ -86,11 +86,15 @@
     </div>
 
     <div id="sender-progress-wrap" style="display:none;width:100%;max-width:420px;margin:8px 0">
-      <div class="param-row"><span>当前帧</span><span id="seq-label">0 / 0</span></div>
-      <div class="progress-bar" id="sender-bar"><div class="progress-fill" id="sender-fill" style="width:0%"></div></div>
-      <div class="param-row"><span>块操作（点击重发该块）</span><span id="block-count"></span></div>
-      <div id="sender-blocks" style="display:grid;gap:2px;grid-template-columns:repeat(auto-fill,8px);background:#161616;border-radius:8px;padding:6px;max-height:100px;overflow-y:auto"></div>
-      <div class="hint">点击某块 = 从该块开始重发（发送该块的 degree-1 帧，接收端可直接解出）</div>
+      <div class="param-row"><span>帧进度（拖动从对应帧开始）</span><span id="seq-label">0 / 0</span></div>
+      <input type="range" id="seq-slider" min="0" max="1000" value="0" style="width:100%" />
+      <div class="param-row"><span>块操作</span></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="number" id="block-input" min="0" placeholder="块号" style="flex:1;background:#1d1d1d;border:1px solid #333;border-radius:6px;padding:6px 8px;color:#ddd;font-size:13px" />
+        <button id="block-start" class="btn ghost" style="padding:6px 10px">从此块开始</button>
+        <button id="block-resend" class="btn ghost" style="padding:6px 10px">重播此块</button>
+      </div>
+      <div class="hint">块号 0-(K-1)：从此块开始 = 跳到该块的帧继续流；重播此块 = 连续发送该块 10 次</div>
     </div>
 
     <div style="display:flex;gap:8px;margin:12px 0">

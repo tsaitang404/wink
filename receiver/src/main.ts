@@ -58,7 +58,6 @@ async function startCamera() {
     currentIdentity = '';
     framesNeeded = 0;
     framesGot = 0;
-    fpsWindow = [];
     // 状态机：从隐藏/完成态恢复 → 原样显示
     leaveHiddenMode();
     $('manifest-card').style.display = 'none';
@@ -280,26 +279,22 @@ function updateProgress(dec: LTDecoder, got: number) {
   }
 }
 
-// 码率检测：最近 2s 内新帧数 → 实际解码速率，对比发送端 fps
-let fpsWindow: number[] = [];
+// 码率检测：总平均速度 = 有效新帧数 / 总耗时（实时速度波动大，用平均更稳）
 function updateFpsHint(dec: LTDecoder) {
-  const now = performance.now();
-  fpsWindow.push(now);
-  // 只保留最近 2s
-  fpsWindow = fpsWindow.filter((t) => now - t < 2000);
   const hint = $('fps-hint');
-  if (fpsWindow.length < 10) {
+  const elapsed = (performance.now() - startTime) / 1000;
+  if (dec.framesNew < 5 || elapsed < 1) {
     hint.style.display = 'none';
     return;
   }
-  const actualFps = (fpsWindow.length / 2).toFixed(1);
+  const avgFps = dec.framesNew / elapsed;
   const sendFps = manifest?.fps ?? 0;
-  if (sendFps > 0 && Number(actualFps) < sendFps * 0.7) {
-    const recommended = Math.max(1, Math.floor(Number(actualFps) * 0.8));
-    hint.textContent = `⚠️ 解码 ${actualFps} fps < 发送 ${sendFps} fps —— 建议发送端降到 ${recommended} fps`;
+  if (sendFps > 0 && avgFps < sendFps * 0.7) {
+    const recommended = Math.max(1, Math.floor(avgFps * 0.8));
+    hint.textContent = `⚠️ 平均解码 ${avgFps.toFixed(1)} fps < 发送 ${sendFps} fps —— 建议发送端降到 ${recommended} fps`;
     hint.style.display = 'block';
   } else if (sendFps > 0) {
-    hint.textContent = `解码 ${actualFps} fps · 发送 ${sendFps} fps · 匹配 ✓`;
+    hint.textContent = `平均解码 ${avgFps.toFixed(1)} fps · 发送 ${sendFps} fps · 匹配 ✓`;
     hint.style.display = 'block';
   }
 }
