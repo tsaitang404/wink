@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>wink 发送端</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: #111; color: #eee; min-height: 100vh;
+        display: flex; flex-direction: column; align-items: center; padding: 16px;
+      }
+      header { font-size: 20px; font-weight: 600; padding: 8px; }
+      header .sub { font-size: 12px; color: #888; font-weight: 400; text-align: center; }
+      #file-row { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; justify-content: center; }
+      .btn {
+        background: #7c5cff; color: #fff; border: none; padding: 12px 24px;
+        border-radius: 10px; font-size: 15px; cursor: pointer;
+      }
+      .btn:active { opacity: 0.8; }
+      .btn.ghost { background: #2a2a2a; }
+      .btn.green { background: #00b070; }
+      #canvas-wrap {
+        background: #fff; border-radius: 12px; padding: 8px;
+        max-width: 100%; margin: 8px 0;
+      }
+      canvas { display: block; max-width: 100%; max-height: 60vh; margin: 0 auto; image-rendering: pixelated; }
+      #params {
+        width: 100%; max-width: 420px; background: #1d1d1d; border-radius: 12px;
+        padding: 16px; margin: 12px 0; border: 1px solid #333;
+      }
+      #params h3 { font-size: 14px; margin-bottom: 10px; color: #7c5cff; }
+      .param-row { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; font-size: 13px; }
+      .param-row input[type=range] { width: 55%; accent-color: #7c5cff; }
+      .param-row select { background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 4px 8px; }
+      #info { font-size: 12px; color: #999; text-align: center; padding: 8px; line-height: 1.6; }
+      #info b { color: #ccc; }
+      #status { padding: 8px; text-align: center; font-size: 14px; color: #7c5cff; min-height: 32px; }
+      #filename { font-size: 13px; color: #ccc; text-align: center; margin: 8px 0; word-break: break-all; }
+      .hint { font-size: 12px; color: #666; text-align: center; padding: 6px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      wink 发送端
+      <div class="sub">选个文件，对手机眨眨眼</div>
+    </header>
+
+    <div id="file-row">
+      <button id="pick-btn" class="btn">📁 选择文件</button>
+      <button id="paste-btn" class="btn ghost">📋 粘贴文本</button>
+      <input type="file" id="file-input" style="display:none" />
+    </div>
+    <div id="filename"></div>
+
+    <div id="status">未选择文件</div>
+
+    <div id="canvas-wrap">
+      <canvas id="qr" width="400" height="400"></canvas>
+    </div>
+
+    <div id="params">
+      <h3>⚙️ 传输参数（开始前可调）</h3>
+      <div class="param-row">
+        <span>帧率</span>
+        <input type="range" id="fps" min="5" max="60" value="30" step="5" />
+        <span id="fps-label">30</span>
+      </div>
+      <div class="param-row">
+        <span>二维码尺寸</span>
+        <select id="qr-size">
+          <option value="15">v15（小，适合远距离）</option>
+          <option value="20">v20</option>
+          <option value="27">v27</option>
+          <option value="40" selected>v40（大，高带宽）</option>
+        </select>
+      </div>
+      <div class="param-row">
+        <span>块长</span>
+        <select id="block-len">
+          <option value="64">64 B</option>
+          <option value="128" selected>128 B</option>
+          <option value="512">512 B</option>
+          <option value="1024">1024 B</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="info">
+      <span id="info-text">选文件后显示元信息二维码，接收端扫码可预览</span>
+    </div>
+
+    <div style="display:flex;gap:8px;margin:12px 0">
+      <button id="start-btn" class="btn green" style="display:none">▶ 开始传输</button>
+      <button id="stop-btn" class="btn" style="display:none">■ 停止</button>
+    </div>
+
+    <div class="hint">提示：屏幕亮度调到最高，传输中保持手机摄像头对准二维码</div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

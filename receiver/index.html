@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>wink 接收端</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: #111; color: #eee; min-height: 100vh;
+        display: flex; flex-direction: column; align-items: center;
+      }
+      header { padding: 16px; font-size: 18px; font-weight: 600; }
+      header .sub { font-size: 12px; color: #888; font-weight: 400; }
+      #video-wrap {
+        position: relative; width: 100%; max-width: 480px; margin: 0 auto;
+      }
+      video {
+        width: 100%; border-radius: 12px; background: #000;
+        display: block; aspect-ratio: 4/3; object-fit: cover;
+      }
+      #status {
+        padding: 12px; text-align: center; color: #bbb; font-size: 14px;
+        min-height: 44px; width: 100%;
+      }
+      #manifest-card {
+        display: none; background: #1d1d1d; border-radius: 12px;
+        padding: 16px; width: calc(100% - 32px); max-width: 480px; margin: 8px auto;
+        border: 1px solid #333;
+      }
+      #manifest-card h3 { font-size: 14px; margin-bottom: 8px; color: #7c5cff; }
+      #manifest-card .row { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
+      #manifest-card .row span:last-child { color: #ccc; }
+      #progress-wrap { display: none; width: calc(100% - 32px); max-width: 480px; margin: 8px auto; }
+      #progress-bar {
+        width: 100%; height: 10px; background: #2a2a2a; border-radius: 5px; overflow: hidden;
+      }
+      #progress-fill { height: 100%; width: 0; background: linear-gradient(90deg, #7c5cff, #00d4ff); transition: width 0.3s; }
+      #progress-stats { font-size: 12px; color: #999; text-align: center; padding: 6px; }
+      #result {
+        display: none; width: calc(100% - 32px); max-width: 480px; margin: 8px auto;
+        background: #1d1d1d; border-radius: 12px; padding: 16px; border: 1px solid #333;
+      }
+      #result h3 { font-size: 14px; color: #00d48a; margin-bottom: 8px; }
+      #result .file-meta { font-size: 12px; color: #888; margin-bottom: 10px; }
+      .btn {
+        background: #7c5cff; color: #fff; border: none; padding: 12px 24px;
+        border-radius: 10px; font-size: 15px; cursor: pointer; margin: 6px;
+      }
+      .btn:active { opacity: 0.8; }
+      .btn.ghost { background: #2a2a2a; }
+      .btn-row { display: flex; justify-content: center; flex-wrap: wrap; }
+      #text-preview {
+        background: #000; padding: 12px; border-radius: 8px; font-family: monospace;
+        font-size: 12px; white-space: pre-wrap; word-break: break-all;
+        max-height: 200px; overflow-y: auto; margin-bottom: 10px;
+      }
+      #media-preview { max-width: 100%; max-height: 240px; border-radius: 8px; margin-bottom: 10px; display: none; }
+      #start-btn { margin: 12px auto; }
+      .verified { color: #00d48a; font-size: 12px; }
+      #block-grid {
+        display: flex; flex-wrap: wrap; gap: 2px; margin-top: 8px; max-height: 60px; overflow: hidden;
+      }
+      .blk { width: 6px; height: 6px; background: #333; border-radius: 1px; }
+      .blk.solved { background: #7c5cff; }
+    </style>
+  </head>
+  <body>
+    <header>
+      wink 接收端
+      <div class="sub">屏幕对摄像头眨眼，文件就来了</div>
+    </header>
+
+    <div id="video-wrap">
+      <video id="cam" autoplay playsinline muted></video>
+    </div>
+
+    <div class="btn-row">
+      <button id="start-btn" class="btn">▶ 启动摄像头</button>
+    </div>
+
+    <div id="status">等待启动摄像头…</div>
+
+    <div id="manifest-card">
+      <h3>📡 收到传输预览</h3>
+      <div class="row"><span>文件名</span><span id="mf-name"></span></div>
+      <div class="row"><span>大小</span><span id="mf-size"></span></div>
+      <div class="row"><span>块数 K</span><span id="mf-k"></span></div>
+      <div class="row"><span>帧率</span><span id="mf-fps"></span></div>
+      <div class="row"><span>预估时间</span><span id="mf-est"></span></div>
+    </div>
+
+    <div id="progress-wrap">
+      <div id="progress-bar"><div id="progress-fill"></div></div>
+      <div id="progress-stats"></div>
+      <div id="block-grid"></div>
+    </div>
+
+    <div id="result">
+      <h3>✅ 接收完成 <span class="verified">· SHA-256 已校验</span></h3>
+      <div id="text-preview" style="display:none"></div>
+      <img id="media-preview" />
+      <video id="media-video" controls style="display:none;max-width:100%;max-height:240px;border-radius:8px;margin-bottom:10px"></video>
+      <div class="file-meta" id="file-meta"></div>
+      <div class="btn-row">
+        <button id="copy-btn" class="btn ghost" style="display:none">📋 复制</button>
+        <button id="save-btn" class="btn">💾 保存文件</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
