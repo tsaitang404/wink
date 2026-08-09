@@ -202,19 +202,48 @@ function resendBlock(b: number) {
   }, 1000 / fps);
 }
 
-/** 帧进度（只读参考）：当前 seq / 期望总帧数 ~1.15K，无操控 */
+/** 帧进度：可点击/拖动跳转，播放完循环（进度从零开始） */
 let totalFrames = 0;
+let sliderBound = false;
 function setupSeqSlider(k: number) {
   totalFrames = Math.ceil(k * 1.15);
+  const slider = $('seq-slider') as HTMLInputElement;
+  slider.max = String(totalFrames);
+  slider.value = '0';
   updateSeqSlider(0);
+  if (!sliderBound) {
+    sliderBound = true;
+    slider.addEventListener('input', (e) => {
+      const target = Number(slider.value) >>> 0;
+      // 气泡：帧号 + 百分比
+      const tip = $('seq-tip') as HTMLElement;
+      const pct = Math.floor((target / Math.max(1, totalFrames)) * 100);
+      tip.textContent = `帧 ${target} · ${pct}%`;
+      tip.style.display = 'block';
+      const rect = (e.target as HTMLElement).getBoundingClientRect();
+      const ratio = target / Math.max(1, totalFrames);
+      tip.style.left = `${rect.left + rect.width * ratio - 30}px`;
+      tip.style.top = `${rect.top - 28}px`;
+      // 拖动时若在传输中，跳到该帧继续
+      if (streaming && encoder) {
+        seq = target;
+        $('status').textContent = `⏭ 跳到帧 ${target} (${pct}%) 继续`;
+      }
+    });
+    slider.addEventListener('change', () => {
+      $('seq-tip').style.display = 'none';
+    });
+  }
 }
 
 function updateSeqSlider(s: number) {
   const label = $('seq-label');
-  // 进度条宽度 = seq/期望总帧数（单调，超过后保持 100%）
-  const pct = Math.min(100, (s / Math.max(1, totalFrames)) * 100);
-  $('sender-fill').style.width = `${pct}%`;
-  label.textContent = `${s} / ~${totalFrames}`;
+  // 循环：seq 到总帧数后归零重新走
+  const cycle = s % Math.max(1, totalFrames);
+  const pct = (cycle / Math.max(1, totalFrames)) * 100;
+  const slider = $('seq-slider') as HTMLInputElement;
+  if (document.activeElement !== slider) slider.value = String(cycle);
+  label.textContent = `${cycle} / ~${totalFrames}`;
 }
 
 /** 块输入框：从此块开始 / 重播此块 */
