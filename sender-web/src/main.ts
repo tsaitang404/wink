@@ -158,7 +158,7 @@ function renderFrameAt(s: number) {
     { sessionId, seq: s, k: encoder.k, blockLen: currentParams().blockLen, totalLen: container.length, payloadFnv: fnv1a(container) },
     block,
   );
-  void drawQr(frame);
+  void drawQr(frame, currentParams().qrVersion);
   updateSeqSlider(s);
 }
 

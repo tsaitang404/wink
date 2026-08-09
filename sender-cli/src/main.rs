@@ -100,9 +100,9 @@ fn main() {
         capacity.saturating_sub(20).max(64)
     });
 
-    // 5. 元信息 QR（返回实际使用的 QR 版本号）
+    // 5. 元信息 QR：自动选合适版本（内容小就用小码，不跟随 -v）
     let manifest = build_manifest_bytes(name_bytes, &container, session_id, fps, block_len);
-    let (manifest_ansi, manifest_version) = qr::render_ansi(&manifest, 2, qr_version);
+    let (manifest_ansi, manifest_version) = qr::render_ansi(&manifest, 2, None);
 
     // 主循环：显示 manifest → 按空格开始帧流 → 按 q 停止回到 manifest
     let enc = LTEncoder::new(&container, block_len, session_id);
