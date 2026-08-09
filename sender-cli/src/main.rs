@@ -375,9 +375,15 @@ fn restore_termios(termios: libc::termios) {
     }
 }
 
+thread_local! {
+    /// 跨调用累积的输入缓冲（慢速输入拼接）
+    static INPUT_BUF: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
 /// 非阻塞读整行命令（raw mode 下逐字符读入，Enter 提交）
-/// 返回 None = 无输入；Some(line) = 收到完整命令行
+/// 返回 None = 无完整行；Some(line) = 收到完整命令行
 /// 底部固定一行输入行：`wink> `
+/// 跨调用累积缓冲：慢速输入（字符间停顿）不会被拆碎消费
 #[allow(unsafe_code)]
 fn read_command_line() -> Option<String> {
     use std::os::fd::AsRawFd;
@@ -391,21 +397,23 @@ fn read_command_line() -> Option<String> {
     if r <= 0 {
         return None;
     }
-    // 读入一行（有数据就持续读，直到 \n 或超时）
-    let mut line = String::new();
+    // 读入可用数据，追加到跨调用累积缓冲（慢速输入不被拆碎）
     let mut buf = [0u8; 64];
-    loop {
-        let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-        if n <= 0 {
-            break;
-        }
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+    if n <= 0 {
+        return None;
+    }
+    INPUT_BUF.with(|cell| {
+        let mut line = cell.borrow_mut();
         for &b in &buf[..n as usize] {
+            // 独立空格（累积缓冲为空时按下）→ 立即返回暂停命令
             if b == b' ' && line.is_empty() {
-                // 独立空格（行首）→ 立即返回暂停命令，不用等回车
                 return Some(" ".to_string());
             }
             if b == b'\n' || b == b'\r' {
-                return Some(line.clone());
+                // 完整行：取出并清空缓冲
+                let out = std::mem::take(&mut *line);
+                return Some(out);
             }
             if b == 0x7f || b == 8 {
                 // 退格
@@ -414,17 +422,8 @@ fn read_command_line() -> Option<String> {
                 line.push(b as char);
             }
         }
-        // 再 poll 一次，有更多数据继续读
-        let r2 = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
-        if r2 <= 0 {
-            break;
-        }
-    }
-    if line.is_empty() {
-        None
-    } else {
-        Some(line)
-    }
+        None // 未凑成完整行：留在缓冲，下次继续累积
+    })
 }
 
 /// 渲染指定帧到备用屏（光标归位覆盖，不滚动）
