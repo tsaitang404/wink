@@ -122,13 +122,39 @@ fn main() {
             std::io::stdout().flush().ok();
 
             // 读命令行（有输入才处理，无输入立即返回）
-            if let Some(cmd) = read_command_line() {
-                let cmd = cmd.trim();
-                if cmd == "q" {
+            if let Some(raw_cmd) = read_command_line() {
+                let cmd = raw_cmd.trim();
+                // 独立空格（未 trim 前 == " "）→ 暂停
+                if raw_cmd == " " && cmd.is_empty() {
+                    // 空格 = 暂停/继续（保持当前帧，等再次空格/回车）
+                    eprintln!("\x1b[K⏸ 已暂停 —— 按空格或回车继续");
+                    let mut quit = false;
+                    loop {
+                        match read_command_line() {
+                            Some(c)
+                                if c.trim() == " " || c.trim() == "p" || c.trim().is_empty() =>
+                            {
+                                eprintln!("\x1b[K🚀 继续传输");
+                                break;
+                            }
+                            Some(c) if c.trim() == "q" => {
+                                quit = true;
+                                break;
+                            }
+                            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+                        }
+                    }
+                    if quit {
+                        break;
+                    }
+                } else if cmd == "q" {
                     break;
                 } else if let Some(n) = cmd.strip_prefix("block ") {
                     if let Ok(b) = n.trim().parse::<usize>() {
-                        if let Some(s) = enc.find_deg1_seq(b, seq, 8192) {
+                        let s = enc
+                            .find_deg1_seq(b, seq, 8192)
+                            .or_else(|| enc.find_any_seq(b, seq, 65536));
+                        if let Some(s) = s {
                             eprintln!("\x1b[K🔁 重播块 #{b}（帧 {s}）10 次");
                             for _ in 0..10 {
                                 let rb = enc.encode(s);
@@ -150,7 +176,7 @@ fn main() {
                                 ));
                             }
                         } else {
-                            eprintln!("\x1b[K⚠️ 块 #{b} 在 8192 帧内找不到 degree-1 帧");
+                            eprintln!("\x1b[K⚠️ 块 #{b} 在 65536 帧内找不到任何包含它的帧");
                         }
                     }
                 } else if let Some(p) = cmd.strip_suffix('%') {
@@ -330,6 +356,10 @@ fn read_command_line() -> Option<String> {
             break;
         }
         for &b in &buf[..n as usize] {
+            if b == b' ' && line.is_empty() {
+                // 独立空格（行首）→ 立即返回暂停命令，不用等回车
+                return Some(" ".to_string());
+            }
             if b == b'\n' || b == b'\r' {
                 return Some(line.clone());
             }

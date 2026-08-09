@@ -144,6 +144,7 @@ export class LTEncoder {
    * 找到生成 degree-1 帧且只包含目标块的 seq（重发指定块用）。
    * 扫描有限范围（默认 8192 个候选），找到即返回；找不到返回 null。
    * 该帧与普通帧完全同构，接收端用同一 seq 重新计算 indices → 直接解出该块。
+   * 注意：K 大时 degree-1 帧稀疏，可能找不到 → 调用方应降级到 findAnySeq。
    */
   findDeg1Seq(block: number, fromSeq = 0, scanLimit = 8192): number | null {
     if (block < 0 || block >= this.k) return null;
@@ -151,6 +152,21 @@ export class LTEncoder {
       const s = (fromSeq + i) >>> 0;
       const idx = frameIndices(this.k, this.cdf, this.sessionId, s);
       if (idx.length === 1 && idx[0] === block) return s;
+    }
+    return null;
+  }
+
+  /**
+   * 找到包含目标块的任意帧 seq（degree-1 稀疏时的降级方案）。
+   * 每个块被许多帧覆盖（期望 ~ln(k)），扫描范围内容易命中。
+   * 重播这类帧：接收端若已解出该帧其他块，或与 pending 帧组合，仍能推进解码。
+   */
+  findAnySeq(block: number, fromSeq = 0, scanLimit = 8192): number | null {
+    if (block < 0 || block >= this.k) return null;
+    for (let i = 0; i < scanLimit; i++) {
+      const s = (fromSeq + i) >>> 0;
+      const idx = frameIndices(this.k, this.cdf, this.sessionId, s);
+      if (idx.includes(block)) return s;
     }
     return null;
   }

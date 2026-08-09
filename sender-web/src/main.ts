@@ -135,22 +135,18 @@ function fmtDuration(s: number): string {
   return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
 }
 
-function start() {
-  if (!container) return;
-  const { fps, qrVersion, blockLen } = currentParams();
-  encoder = new LTEncoder(container, blockLen, sessionId);
-  streaming = true;
-  seq = 0;
-  $('start-btn').style.display = 'none';
-  $('stop-btn').style.display = 'inline-block';
-  $('sender-progress-wrap').style.display = 'block';
-  $('status').textContent = '🚀 传输中… 保持对准';
-  setupSeqSlider(encoder.k);
+let paused = false;
+
+/** 启动主流帧循环（从当前 seq 继续） */
+function startStream() {
+  if (streamTimer) clearInterval(streamTimer);
+  paused = false;
+  const { fps } = currentParams();
   streamTimer = setInterval(() => {
     if (!encoder) return;
     const block = encoder.encode(seq);
     const frame = packFrame(
-      { sessionId, seq, k: encoder.k, blockLen, totalLen: container!.length, payloadFnv: fnv1a(container!) },
+      { sessionId, seq, k: encoder.k, blockLen: currentParams().blockLen, totalLen: container!.length, payloadFnv: fnv1a(container!) },
       block,
     );
     void drawQr(frame);
@@ -159,45 +155,75 @@ function start() {
   }, 1000 / fps);
 }
 
-/** 重发指定块：扫描找到该块的 degree-1 帧 seq，临时连续发送 10 帧 */
+/** 暂停：停住当前帧（保持显示），操作后对焦用 */
+function pause() {
+  if (paused) return;
+  paused = true;
+  if (streamTimer) clearInterval(streamTimer);
+  if (resendTimer) clearInterval(resendTimer);
+  $('status').textContent = '⏸ 已暂停 —— 点击二维码或按空格继续';
+}
+
+/** 暂停 ↔ 继续 */
+function togglePause() {
+  if (!streaming) return;
+  if (paused) {
+    $('status').textContent = '🚀 传输中… 保持对准';
+    startStream();
+  } else {
+    pause();
+  }
+}
+
+function start() {
+  if (!container) return;
+  const { fps, qrVersion, blockLen } = currentParams();
+  encoder = new LTEncoder(container, blockLen, sessionId);
+  streaming = true;
+  paused = false;
+  seq = 0;
+  $('start-btn').style.display = 'none';
+  $('stop-btn').style.display = 'inline-block';
+  $('sender-progress-wrap').style.display = 'block';
+  $('status').textContent = '🚀 传输中… 保持对准';
+  setupSeqSlider(encoder.k);
+  startStream();
+}
+
+/** 重发指定块：优先找该块的 degree-1 帧（必解出），找不到降级为包含帧（概率推进） */
 let resendTimer: ReturnType<typeof setInterval> | null = null;
 function resendBlock(b: number) {
   if (!encoder || !container) return;
-  const s = encoder.findDeg1Seq(b, seq);
+  let s = encoder.findDeg1Seq(b, seq);
+  let mode = 'd1';
   if (s === null) {
-    $('status').textContent = `⚠️ 块 ${b}：8192 帧内未找到 degree-1 帧`;
-    return;
+    s = encoder.findAnySeq(b, seq, 65536);
+    mode = 'any';
+    if (s === null) {
+      $('status').textContent = `⚠️ 块 ${b}：65536 帧内未找到任何包含它的帧`;
+      return;
+    }
   }
   // 中断当前流 10 帧，发送该块重试
   if (streamTimer) clearInterval(streamTimer);
   if (resendTimer) clearInterval(resendTimer);
   const { fps } = currentParams();
+  const label = mode === 'd1' ? '直投帧' : '包含帧(概率)';
   let n = 0;
   resendTimer = setInterval(() => {
     const block = encoder!.encode(s);
     const frame = packFrame(
-      { sessionId, seq: s, k: encoder!.k, blockLen: currentParams().blockLen, totalLen: container!.length, payloadFnv: fnv1a(container!) },
+      { sessionId, seq: s!, k: encoder!.k, blockLen: currentParams().blockLen, totalLen: container!.length, payloadFnv: fnv1a(container!) },
       block,
     );
     void drawQr(frame);
-    $('status').textContent = `🔁 重发块 #${b}（帧 ${s}）… ${n + 1}/10`;
+    $('status').textContent = `🔁 重发块 #${b}（${label} 帧 ${s}）… ${n + 1}/10`;
     n++;
     if (n >= 10) {
       if (resendTimer) clearInterval(resendTimer);
-      // 恢复主流
-      if (streamTimer) clearInterval(streamTimer);
-      streamTimer = setInterval(() => {
-        if (!encoder) return;
-        const block2 = encoder.encode(seq);
-        const frame2 = packFrame(
-          { sessionId, seq, k: encoder.k, blockLen: currentParams().blockLen, totalLen: container!.length, payloadFnv: fnv1a(container!) },
-          block2,
-        );
-        void drawQr(frame2);
-        updateSeqSlider(seq);
-        seq = (seq + 1) >>> 0;
-      }, 1000 / fps);
-      $('status').textContent = '🚀 传输中… 保持对准';
+      // 重播完成 → 暂停（留时间对焦，手动继续）
+      paused = true;
+      $('status').textContent = `🔁 重播块 #${b} 完成 —— 点击二维码或按空格继续`;
     }
   }, 1000 / fps);
 }
@@ -224,10 +250,15 @@ function setupSeqSlider(k: number) {
       const ratio = target / Math.max(1, totalFrames);
       tip.style.left = `${rect.left + rect.width * ratio - 30}px`;
       tip.style.top = `${rect.top - 28}px`;
-      // 拖动时若在传输中，跳到该帧继续
+      // 拖动时若在传输中：跳到该帧并暂停（留时间对焦）
       if (streaming && encoder) {
         seq = target;
-        $('status').textContent = `⏭ 跳到帧 ${target} (${pct}%) 继续`;
+        if (!paused) {
+          paused = true;
+          if (streamTimer) clearInterval(streamTimer);
+          if (resendTimer) clearInterval(resendTimer);
+        }
+        $('status').textContent = `⏭ 跳到帧 ${target} (${pct}%) —— 点击二维码或按空格继续`;
       }
     });
     slider.addEventListener('change', () => {
@@ -255,15 +286,21 @@ function blockFromInput(mode: 'start' | 'resend') {
     $('status').textContent = `⚠️ 块号无效（0-${encoder?.k ? encoder.k - 1 : '?'}）`;
     return;
   }
-  const s = encoder.findDeg1Seq(b, seq, 8192);
+  let s = encoder.findDeg1Seq(b, seq, 8192);
+  if (s === null) s = encoder.findAnySeq(b, seq, 65536);
   if (s === null) {
-    $('status').textContent = `⚠️ 块 ${b}：8192 帧内未找到 degree-1 帧`;
+    $('status').textContent = `⚠️ 块 ${b}：65536 帧内未找到任何包含它的帧`;
     return;
   }
   if (mode === 'start') {
-    // 从此块开始：跳到该块的 degree-1 帧继续主流
+    // 从此块开始：跳到该块的帧，暂停留对焦时间
     seq = s;
-    $('status').textContent = `⏭ 从块 #${b} 开始（帧 ${s}）继续`;
+    if (!paused) {
+      paused = true;
+      if (streamTimer) clearInterval(streamTimer);
+      if (resendTimer) clearInterval(resendTimer);
+    }
+    $('status').textContent = `⏭ 从块 #${b} 开始（帧 ${s}）—— 点击二维码或按空格继续`;
   } else {
     resendBlock(b);
   }
@@ -285,6 +322,7 @@ $('block-start').addEventListener('click', () => blockFromInput('start'));
 $('block-resend').addEventListener('click', () => blockFromInput('resend'));
 $('block-input').addEventListener('keydown', (e: KeyboardEvent) => {
   if (e.key === 'Enter') blockFromInput('resend');
+  e.stopPropagation();
 });
 
 // 参数变化时重新渲染 manifest
@@ -295,6 +333,17 @@ for (const id of ['fps', 'qr-size']) {
   });
 }
 
+// 点击二维码 = 暂停/继续（留对焦时间）
 canvas.addEventListener('click', () => {
-  canvas.requestFullscreen?.().catch(() => {});
+  togglePause();
+});
+
+// 空格 = 暂停/继续（输入框内不触发）
+window.addEventListener('keydown', (e: KeyboardEvent) => {
+  if (e.code === 'Space') {
+    const t = e.target as HTMLElement;
+    if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return;
+    e.preventDefault();
+    togglePause();
+  }
 });

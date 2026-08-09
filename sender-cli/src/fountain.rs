@@ -200,6 +200,22 @@ impl LTEncoder {
         }
         None
     }
+
+    /// 找到包含目标块的任意帧 seq（degree-1 稀疏时的降级方案）
+    #[must_use]
+    pub fn find_any_seq(&self, block: usize, from_seq: u32, scan_limit: usize) -> Option<u32> {
+        if block >= self.k {
+            return None;
+        }
+        for i in 0..scan_limit {
+            let s = from_seq.wrapping_add(i as u32);
+            let idx = frame_indices(self.k, &self.cdf, self.session_id, s);
+            if idx.contains(&block) {
+                return Some(s);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
