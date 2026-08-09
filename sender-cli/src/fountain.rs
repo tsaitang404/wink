@@ -174,12 +174,18 @@ impl LTEncoder {
                 *item ^= self.blocks[off + w];
             }
         }
+        // block_len 可能不是 4 的倍数（自动优化算出 370 等）：
+        // words 是 ceil(block_len/4)，写 bytes 时截断到 block_len，防越界
         let mut bytes = vec![0u8; self.block_len];
         for (i, w) in out.iter().enumerate() {
-            bytes[i * 4] = *w as u8;
-            bytes[i * 4 + 1] = (*w >> 8) as u8;
-            bytes[i * 4 + 2] = (*w >> 16) as u8;
-            bytes[i * 4 + 3] = (*w >> 24) as u8;
+            let base = i * 4;
+            for j in 0..4 {
+                let pos = base + j;
+                if pos >= self.block_len {
+                    break;
+                }
+                bytes[pos] = (*w >> (j * 8)) as u8;
+            }
         }
         bytes
     }
@@ -269,5 +275,20 @@ mod tests {
             assert_eq!(frame.len(), block_len);
         }
         assert_ne!(enc.encode(0), enc.encode(1));
+    }
+
+    #[test]
+    fn encode_non_multiple_of_4_block_len_no_panic() {
+        // 回归：block_len=370（非 4 倍数，自动优化可能算出）曾导致越界 panic
+        let payload: Vec<u8> = (0..5000).map(|i| (i * 13 % 256) as u8).collect();
+        let block_len = 370;
+        let enc = LTEncoder::new(&payload, block_len, 42);
+        for seq in 0..enc.k * 2 {
+            let frame = enc.encode(seq as u32);
+            assert_eq!(frame.len(), block_len, "frame len = block_len");
+        }
+        assert_ne!(enc.encode(0), enc.encode(1));
+        // 确定性
+        assert_eq!(enc.encode(7), enc.encode(7));
     }
 }
