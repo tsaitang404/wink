@@ -81,11 +81,11 @@ async function loadPayload(name: string, type: string, bytes: Uint8Array, displa
 function currentParams() {
   const fps = Number(($('fps') as HTMLInputElement).value);
   const qrVersion = Number(($('qr-size') as HTMLSelectElement).value);
-  const blockLen = Number(($('block-len') as HTMLSelectElement).value);
   const payloadCap = QR_CAPACITY[qrVersion]! - HEADER_LEN;
-  // 块长不能超过帧载荷
-  const effBlock = Math.min(blockLen, payloadCap);
-  return { fps, qrVersion, blockLen: effBlock, payloadCap };
+  // 块长自动优化：取帧载荷的 1/8（保证每帧能 XOR 多个块，喷泉效率高）
+  // 上限 512 避免块数太少；下限 64 避免块数爆炸
+  const blockLen = Math.min(512, Math.max(64, Math.floor(payloadCap / 8)));
+  return { fps, qrVersion, blockLen, payloadCap };
 }
 
 // qrcode 库需要 byte mode segment 才能编码二进制（默认按 UTF-8 会损坏）
@@ -169,7 +169,7 @@ $('start-btn').addEventListener('click', start);
 $('stop-btn').addEventListener('click', stop);
 
 // 参数变化时重新渲染 manifest
-for (const id of ['fps', 'qr-size', 'block-len']) {
+for (const id of ['fps', 'qr-size']) {
   $(id).addEventListener('input', () => {
     $('fps-label').textContent = ($('fps') as HTMLInputElement).value;
     if (container && !streaming) renderManifest();

@@ -25,6 +25,8 @@ let currentIdentity = '';
 let framesNeeded = 0;
 let framesGot = 0;
 let startTime = 0;
+let miniMode = false;
+const receivedFiles: Array<{ name: string; type: string; bytes: Uint8Array; time: number }> = [];
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -38,20 +40,54 @@ function setStatus(msg: string) {
 
 async function startCamera() {
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 } },
-      audio: false,
-    });
-    video = $('cam') as HTMLVideoElement;
-    video.srcObject = stream;
+    if (!stream) {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 } },
+        audio: false,
+      });
+      video = $('cam') as HTMLVideoElement;
+      video.srcObject = stream;
+    }
     await video.play();
+    // 状态机：从迷你/完成态恢复 → 全屏
+    leaveMiniMode();
+    $('manifest-card').style.display = 'none';
+    $('progress-wrap').style.display = 'none';
+    $('result').style.display = 'none';
     setStatus('等待 wink… 对准发送端的二维码');
-    $('start-btn').textContent = '📷 摄像头已启动';
+    $('start-btn').textContent = '⏹ 停止接收';
+    $('start-btn').classList.add('running');
+    $('cam-toggle').style.display = 'block';
     decoding = true;
     requestAnimationFrame(decodeLoop);
   } catch (e) {
     setStatus(`❌ 摄像头失败: ${(e as Error).message}`);
   }
+}
+
+function stopCamera() {
+  decoding = false;
+  if (stream) {
+    stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+  }
+  video.srcObject = null;
+  $('start-btn').textContent = '▶ 启动摄像头';
+  $('start-btn').classList.remove('running');
+  $('cam-toggle').style.display = 'none';
+  setStatus('已停止 —— 点击启动摄像头重新开始');
+}
+
+function enterMiniMode() {
+  miniMode = true;
+  $('video-wrap').classList.add('mini');
+  $('start-btn').textContent = '⏹ 停止接收';
+  setStatus('✅ 接收完成 —— 点击镜头查看/继续接收');
+}
+
+function leaveMiniMode() {
+  miniMode = false;
+  $('video-wrap').classList.remove('mini');
 }
 
 async function decodeLoop() {
@@ -250,7 +286,62 @@ function showResult(name: string, type: string, bytes: Uint8Array) {
     a.download = safeFileName(name);
     a.click();
   };
-  setStatus('✅ 接收完成');
+
+  // 加入文件历史列表
+  receivedFiles.push({ name, type, bytes, time: Date.now() });
+  addFileToList({ name, type, bytes, time: Date.now() });
+
+  // 接收完成 → 镜头缩小成迷你窗，按钮可点击恢复
+  $('result').style.display = 'block';
+  enterMiniMode();
+  setStatus('✅ 接收完成 —— 点击下方文件保存，或点镜头继续接收');
 }
 
-$('start-btn').addEventListener('click', startCamera);
+function addFileToList(f: { name: string; type: string; bytes: Uint8Array; time: number }) {
+  const list = $('file-list');
+  $('file-list-wrap').style.display = 'block';
+  const item = document.createElement('div');
+  item.className = 'file-item';
+  const safe = safeFileName(f.name);
+  const mime = f.type.split(';')[0]!.toLowerCase();
+  const icon = mime.startsWith('image/') ? '🖼' : mime.startsWith('video/') ? '🎬' : mime.startsWith('text/') ? '📄' : mime.startsWith('audio/') ? '🎵' : '📦';
+  const time = new Date(f.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  item.innerHTML = `
+    <span class="fname">${icon} ${safe}</span>
+    <span class="fmeta">${fmtSize(f.bytes.length)} · ${time}</span>
+    <button>💾</button>
+  `;
+  item.querySelector('button')!.onclick = () => {
+    const blob = new Blob([f.bytes as BlobPart], { type: f.type });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = safe;
+    a.click();
+  };
+  list.prepend(item);
+}
+
+$('start-btn').addEventListener('click', () => {
+  if ($('start-btn').classList.contains('running')) {
+    stopCamera();
+  } else {
+    startCamera();
+  }
+});
+
+// 镜头点击聚焦：迷你窗点击 → 放大并继续接收；全屏点击 → 缩小
+const camVideo = $('cam');
+camVideo.addEventListener('click', () => {
+  if (miniMode) {
+    // 迷你窗点击 → 放大继续接收
+    startCamera();
+  }
+});
+$('cam-toggle').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (miniMode) {
+    startCamera();
+  } else {
+    enterMiniMode();
+  }
+});

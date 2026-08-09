@@ -64,6 +64,26 @@
       }
       .blk { width: 6px; height: 6px; background: #333; border-radius: 1px; }
       .blk.solved { background: #7c5cff; }
+      #cam-toggle {
+        position: absolute; top: 8px; right: 8px; z-index: 5;
+        background: rgba(0,0,0,0.55); color: #fff; border: none;
+        border-radius: 8px; width: 34px; height: 34px; font-size: 16px;
+        cursor: pointer; display: none;
+      }
+      #video-wrap.mini { max-width: 140px; position: fixed; bottom: 16px; right: 16px; z-index: 10; margin: 0; }
+      #video-wrap.mini video { border: 2px solid #7c5cff; }
+      #file-list-wrap {
+        display: none; width: calc(100% - 32px); max-width: 480px; margin: 8px auto;
+      }
+      #file-list-wrap h3 { font-size: 14px; color: #888; margin-bottom: 8px; }
+      .file-item {
+        display: flex; justify-content: space-between; align-items: center;
+        background: #1d1d1d; border-radius: 8px; padding: 10px 12px; margin: 4px 0;
+        border: 1px solid #333; font-size: 13px;
+      }
+      .file-item .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ddd; }
+      .file-item .fmeta { color: #777; font-size: 11px; margin-right: 8px; white-space: nowrap; }
+      .file-item button { background: #2a2a2a; color: #ccc; border: none; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
     </style>
   </head>
   <body>
@@ -74,6 +94,7 @@
 
     <div id="video-wrap">
       <video id="cam" autoplay playsinline muted></video>
+      <button id="cam-toggle" class="cam-btn" title="点击放大/缩小镜头">⛶</button>
     </div>
 
     <div class="btn-row">
@@ -107,6 +128,11 @@
         <button id="copy-btn" class="btn ghost" style="display:none">📋 复制</button>
         <button id="save-btn" class="btn">💾 保存文件</button>
       </div>
+    </div>
+
+    <div id="file-list-wrap">
+      <h3>📁 已接收文件</h3>
+      <div id="file-list"></div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
