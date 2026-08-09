@@ -68,9 +68,11 @@ jobs:
       - name: Assemble final artifacts
         run: |
           cd dist/bin
-          mv wink-linux-x86_64/wink wink-linux-x86_64
-          mv wink-linux-aarch64/wink wink-linux-aarch64
-          mv wink-sender-html/index.html wink-sender.html
+          # 每个 artifact 目录内只有一个文件，直接移动到根（同名目录已删除避免冲突）
+          cp wink-linux-x86_64/wink ./wink-linux-x86_64
+          cp wink-linux-aarch64/wink ./wink-linux-aarch64
+          cp wink-sender-html/index.html ./wink-sender.html
+          rm -rf wink-linux-x86_64 wink-linux-aarch64 wink-sender-html
           chmod +x wink-linux-*
           echo "=== release artifacts ==="
           ls -la
