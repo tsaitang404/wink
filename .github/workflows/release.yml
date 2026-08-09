@@ -68,11 +68,16 @@ jobs:
       - name: Assemble final artifacts
         run: |
           cd dist/bin
-          # 下载结构: dist/bin/<artifact-name>/wink → 重命名为架构文件名
-          install -m755 wink-linux-x86_64/wink ./wink-linux-x86_64
-          install -m755 wink-linux-aarch64/wink ./wink-linux-aarch64
-          install -m644 wink-sender-html/index.html ./wink-sender.html
+          # 下载结构: dist/bin/<artifact-name>/wink
+          # 先移走二进制到临时名，再删目录，最后重命名
+          mv wink-linux-x86_64/wink ./wink-x86.bin
+          mv wink-linux-aarch64/wink ./wink-arm.bin
+          mv wink-sender-html/index.html ./wink-web.html
           rm -rf wink-linux-x86_64 wink-linux-aarch64 wink-sender-html
+          mv ./wink-x86.bin ./wink-linux-x86_64
+          mv ./wink-arm.bin ./wink-linux-aarch64
+          mv ./wink-web.html ./wink-sender.html
+          chmod +x wink-linux-*
           echo "=== release artifacts ==="
           ls -la
           file wink-linux-* | grep -o 'statically linked\|static-pie'
