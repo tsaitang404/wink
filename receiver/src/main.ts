@@ -266,10 +266,13 @@ function updateProgress(dec: LTDecoder, got: number) {
   const pct = Math.min(100, (got / framesNeeded) * 100);
   $('progress-fill').style.width = `${pct}%`;
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(0);
-  // 有效帧 = 新帧（去重后）；总帧 = 收到的全部帧（含重复）
-  const totalGot = dec.framesNew + dec.framesDup;
-  $('progress-stats').textContent = `有效帧 ${dec.framesNew}/${framesNeeded} · 总收 ${totalGot} · 已解块 ${dec.solvedCount}/${dec.k} · ${elapsed}s`;
-  // 码率检测：每 1s 滑动窗口统计新帧数 → 解码 fps，对比 manifest fps
+  // 有效帧 = 新帧（去重后）；无效帧 = 重复帧；总收 = 有效+无效
+  const valid = dec.framesNew;
+  const invalid = dec.framesDup;
+  const totalGot = valid + invalid;
+  $('progress-stats').textContent =
+    `有效 ${valid}/${framesNeeded} · 无效 ${invalid} · 总收 ${totalGot} · 已解块 ${dec.solvedCount}/${dec.k} · ${elapsed}s`;
+  // 码率检测：总平均速度
   updateFpsHint(dec);
   // 帧时间线（按 seq 顺序，单行自适应宽度）
   renderFrameTimeline();
@@ -313,7 +316,8 @@ async function onComplete(container: Uint8Array) {
     }
     // 完成时进度条/位图强制 100% 全绿（可能早于 1.15K 帧解完）
     $('progress-fill').style.width = '100%';
-    $('progress-stats').textContent = `✅ 有效帧 ${decoder?.framesNew ?? 0}/${framesNeeded} · 已解块 ${decoder?.solvedCount ?? 0}/${decoder?.k ?? 0} · 完成`;
+    $('progress-stats').textContent =
+      `✅ 有效 ${decoder?.framesNew ?? 0}/${framesNeeded} · 无效 ${decoder?.framesDup ?? 0} · 总收 ${(decoder?.framesNew ?? 0) + (decoder?.framesDup ?? 0)} · 已解块 ${decoder?.solvedCount ?? 0}/${decoder?.k ?? 0} · 完成`;
     const timeline = $('frame-timeline');
     for (const child of Array.from(timeline.children)) {
       if (child.classList.contains('ft')) child.className = 'ft got';
