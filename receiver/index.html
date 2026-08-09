@@ -65,10 +65,11 @@
       .blk { width: 6px; height: 6px; background: #333; border-radius: 1px; }
       .blk.solved { background: #7c5cff; }
       #frame-timeline {
-        display: flex; gap: 1px; margin: 8px 0 4px; overflow-x: auto;
+        display: flex; gap: 2px; margin: 8px 0 4px;
         padding: 4px; background: #161616; border-radius: 6px;
+        width: 100%; overflow: hidden;
       }
-      #frame-timeline .ft { width: 8px; height: 12px; border-radius: 1px; background: #333; flex-shrink: 0; }
+      #frame-timeline .ft { flex: 1 1 0; min-width: 2px; height: 14px; border-radius: 1px; background: #333; }
       #frame-timeline .ft.got { background: #2ecc71; }
       #block-grid {
         display: grid; gap: 2px; padding: 6px; background: #161616;
@@ -90,6 +91,7 @@
         border-radius: 8px; width: 34px; height: 34px; font-size: 16px;
         cursor: pointer; display: none;
       }
+      #video-wrap.hidden { display: none; }
       #video-wrap.mini { max-width: 140px; position: fixed; bottom: 16px; right: 16px; z-index: 10; margin: 0; }
       #video-wrap.mini video { border: 2px solid #7c5cff; }
       #file-list-wrap {
@@ -104,6 +106,7 @@
       .file-item .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ddd; }
       .file-item .fmeta { color: #777; font-size: 11px; margin-right: 8px; white-space: nowrap; }
       .file-item button { background: #2a2a2a; color: #ccc; border: none; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+      .fps-hint { font-size: 11px; color: #e67e22; margin-top: 4px; display: none; }
     </style>
   </head>
   <body>
@@ -135,6 +138,7 @@
     <div id="progress-wrap">
       <div class="progress-bar" id="frame-progress"><div class="progress-fill" id="progress-fill"></div></div>
       <div class="progress-stats" id="progress-stats">等待传输…</div>
+      <div class="fps-hint" id="fps-hint"></div>
       <div id="frame-timeline" title="帧接收时间线：绿色=已收到"></div>
       <div class="block-title">块状态（点击查看块号）</div>
       <div id="block-grid"></div>

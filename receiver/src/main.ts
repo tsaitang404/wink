@@ -49,8 +49,8 @@ async function startCamera() {
       video.srcObject = stream;
     }
     await video.play();
-    // 状态机：从迷你/完成态恢复 → 全屏
-    leaveMiniMode();
+    // 状态机：从隐藏/完成态恢复 → 原样显示
+    leaveHiddenMode();
     $('manifest-card').style.display = 'none';
     $('progress-wrap').style.display = 'none';
     $('result').style.display = 'none';
@@ -65,17 +65,17 @@ async function startCamera() {
   }
 }
 
-function enterMiniMode() {
+function enterHiddenMode() {
   miniMode = true;
-  $('video-wrap').classList.add('mini');
+  $('video-wrap').classList.add('hidden');
   $('start-btn').style.display = 'inline-block';
   $('start-btn').textContent = '▶ 继续接收';
   setStatus('✅ 接收完成 —— 点击继续接收');
 }
 
-function leaveMiniMode() {
+function leaveHiddenMode() {
   miniMode = false;
-  $('video-wrap').classList.remove('mini');
+  $('video-wrap').classList.remove('hidden');
 }
 
 async function decodeLoop() {
@@ -210,19 +210,39 @@ function renderFrameTimeline() {
   const seqs = decoder.receivedSeqs();
   const timeline = $('frame-timeline');
   timeline.innerHTML = '';
-  // 显示最近 200 帧窗口（seq 回绕保护：按最小值起）
   if (seqs.size === 0) return;
   const sorted = [...seqs].sort((a, b) => a - b);
   const min = sorted[0]!;
-  const max = Math.max(min + 199, sorted[sorted.length - 1]!);
-  const total = max - min + 1;
-  const cells = Math.min(total, 240);
-  for (let i = 0; i < cells; i++) {
-    const s = min + i;
-    const div = document.createElement('div');
-    div.className = 'ft' + (seqs.has(s) ? ' got' : '');
-    div.title = `帧 ${s}`;
-    timeline.appendChild(div);
+  const max = sorted[sorted.length - 1]!;
+  const span = max - min + 1;
+  // 单行自适应宽度：窗口太大时分段聚合（每格代表若干帧）
+  const CELLS = 120;
+  if (span <= CELLS) {
+    for (let i = 0; i < span; i++) {
+      const s = min + i;
+      const div = document.createElement('div');
+      div.className = 'ft' + (seqs.has(s) ? ' got' : '');
+      div.title = `帧 ${s}`;
+      timeline.appendChild(div);
+    }
+  } else {
+    // 聚合：每格覆盖 span/CELLS 帧，区间内任一收到即绿
+    const bucket = span / CELLS;
+    for (let c = 0; c < CELLS; c++) {
+      const from = Math.floor(min + c * bucket);
+      const to = Math.floor(min + (c + 1) * bucket);
+      let got = false;
+      for (let s = from; s < to; s++) {
+        if (seqs.has(s)) {
+          got = true;
+          break;
+        }
+      }
+      const div = document.createElement('div');
+      div.className = 'ft' + (got ? ' got' : '');
+      div.title = `帧 ${from}-${to}`;
+      timeline.appendChild(div);
+    }
   }
 }
 
@@ -230,9 +250,12 @@ function updateProgress(dec: LTDecoder, got: number) {
   const pct = Math.min(100, (got / framesNeeded) * 100);
   $('progress-fill').style.width = `${pct}%`;
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(0);
-  const dupRate = got > 0 ? ((dec.framesDup / (dec.framesNew + dec.framesDup)) * 100).toFixed(0) : '0';
-  $('progress-stats').textContent = `帧 ${got}/${framesNeeded} · 已解块 ${dec.solvedCount}/${dec.k} · ${elapsed}s · 重复 ${dupRate}%`;
-  // 帧时间线（按 seq 顺序）
+  // 有效帧 = 新帧（去重后）；总帧 = 收到的全部帧（含重复）
+  const totalGot = dec.framesNew + dec.framesDup;
+  $('progress-stats').textContent = `有效帧 ${dec.framesNew}/${framesNeeded} · 总收 ${totalGot} · 已解块 ${dec.solvedCount}/${dec.k} · ${elapsed}s`;
+  // 码率检测：每 1s 滑动窗口统计新帧数 → 解码 fps，对比 manifest fps
+  updateFpsHint(dec);
+  // 帧时间线（按 seq 顺序，单行自适应宽度）
   renderFrameTimeline();
   // 块网格：真实 K 块逐块三色（灰=未收 橙=收到未解出 绿=已解出）
   const grid = $('block-grid');
@@ -240,6 +263,30 @@ function updateProgress(dec: LTDecoder, got: number) {
   for (let i = 0; i < cells.length; i++) {
     const st = dec.blockState(i);
     cells[i]!.className = st === 2 ? 'blk solved' : st === 1 ? 'blk pending' : 'blk';
+  }
+}
+
+// 码率检测：最近 2s 内新帧数 → 实际解码速率，对比发送端 fps
+let fpsWindow: number[] = [];
+function updateFpsHint(dec: LTDecoder) {
+  const now = performance.now();
+  fpsWindow.push(now);
+  // 只保留最近 2s
+  fpsWindow = fpsWindow.filter((t) => now - t < 2000);
+  const hint = $('fps-hint');
+  if (fpsWindow.length < 10) {
+    hint.style.display = 'none';
+    return;
+  }
+  const actualFps = (fpsWindow.length / 2).toFixed(1);
+  const sendFps = manifest?.fps ?? 0;
+  if (sendFps > 0 && Number(actualFps) < sendFps * 0.7) {
+    const recommended = Math.max(1, Math.floor(Number(actualFps) * 0.8));
+    hint.textContent = `⚠️ 解码 ${actualFps} fps < 发送 ${sendFps} fps —— 建议发送端降到 ${recommended} fps`;
+    hint.style.display = 'block';
+  } else if (sendFps > 0) {
+    hint.textContent = `解码 ${actualFps} fps · 发送 ${sendFps} fps · 匹配 ✓`;
+    hint.style.display = 'block';
   }
 }
 
@@ -319,7 +366,7 @@ function showResult(name: string, type: string, bytes: Uint8Array) {
 
   // 接收完成 → 镜头缩小成迷你窗，按钮可点击恢复
   $('result').style.display = 'block';
-  enterMiniMode();
+  enterHiddenMode();
   setStatus('✅ 接收完成 —— 点击下方文件保存，或点镜头继续接收');
 }
 
@@ -365,6 +412,6 @@ $('cam-toggle').addEventListener('click', (e) => {
   if (miniMode) {
     startCamera();
   } else {
-    enterMiniMode();
+    enterHiddenMode();
   }
 });

@@ -219,29 +219,19 @@ function resendBlock(b: number) {
   }, 1000 / fps);
 }
 
-/** 进度条：seq 位置显示 + 拖动跳转 */
+/** 总帧进度：显示 当前帧/总帧数 + 进度条（总帧 = 预估完成帧 1.15K） */
+let totalFrames = 0;
 function setupSeqSlider(k: number) {
-  const slider = $('seq-slider') as HTMLInputElement;
-  const max = Math.max(1000, Math.ceil(k * 1.3));
-  slider.max = String(max);
-  slider.value = '0';
-  $('seq-label').textContent = '0';
-  slider.addEventListener('input', () => {
-    const target = Number(slider.value) >>> 0;
-    $('seq-label').textContent = String(target);
-    // 拖动时若在传输中，跳转到该位置继续（重新渲染下一帧）
-    if (streaming && encoder) {
-      seq = target;
-      $('status').textContent = `⏭ 跳到帧 ${target} 继续`;
-    }
-  });
+  totalFrames = Math.ceil(k * 1.15);
+  updateSeqSlider(0);
 }
 
 function updateSeqSlider(s: number) {
-  const slider = $('seq-slider') as HTMLInputElement;
-  if (!slider || Number(slider.value) > s) return; // 用户拖动中不覆盖
-  slider.value = String(s);
-  $('seq-label').textContent = String(s);
+  const label = $('seq-label');
+  label.textContent = `${s} / ${totalFrames}`;
+  // 进度条：seq 超过总帧数后取模循环（喷泉码循环发，进度按当前周期）
+  const pct = Math.min(100, ((s % totalFrames) / totalFrames) * 100);
+  $('sender-fill').style.width = `${pct}%`;
 }
 
 function stop() {
