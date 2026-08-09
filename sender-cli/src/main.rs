@@ -141,9 +141,14 @@ fn parse_arg(args: &[String], key: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
-/// 文件容器（无压缩版）：magic WNK1 + nameLen + dataLen + data
-/// 与 TS packFile 布局兼容（compression=0）
+/// 文件容器：magic WNK1 + nameLen + dataLen + sha256 + data
+/// 与 TS packFile 布局兼容（compression=0，typeLen=0）
 fn pack_container(data: &[u8], name: &[u8]) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let sha = hasher.finalize();
+
     let mut out = Vec::with_capacity(49 + name.len() + data.len());
     out.extend_from_slice(&[0x57, 0x4e, 0x4b, 0x31]); // WNK1
     out.push(0); // compression none
@@ -151,7 +156,7 @@ fn pack_container(data: &[u8], name: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&0u16.to_le_bytes()); // typeLen = 0
     out.extend_from_slice(&(data.len() as u32).to_le_bytes()); // originalSize
     out.extend_from_slice(&(data.len() as u32).to_le_bytes()); // transmittedSize
-    out.extend_from_slice(&[0u8; 32]); // sha256 占位（终端发送端 v0.1 不计算）
+    out.extend_from_slice(sha.as_slice()); // SHA-256（真实计算）
     out.extend_from_slice(name);
     out.extend_from_slice(data);
     out
