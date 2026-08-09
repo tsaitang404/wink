@@ -21,6 +21,7 @@ let fileBytes: Uint8Array | null = null;
 let fileName = '';
 let fileType = '';
 let container: Uint8Array | null = null;
+let containerGzip = false;
 let sessionId = 0;
 let encoder: LTEncoder | null = null;
 let streaming = false;
@@ -68,6 +69,7 @@ async function loadPayload(name: string, type: string, bytes: Uint8Array, displa
     if (name !== '文本片段') {
       const packed = await packFile(name, type, bytes);
       container = packed.container;
+      containerGzip = packed.compression === 'gzip';
     } else {
       container = bytes;
     }
@@ -103,15 +105,15 @@ async function drawQr(bytes: Uint8Array, qrVersion?: number) {
 }
 
 function renderManifest() {
-  if (!container) return;
+  if (!container || !fileBytes) return;
   const { fps, qrVersion, blockLen, payloadCap } = currentParams();
   const k = Math.max(1, Math.ceil(container.length / blockLen));
   const m = buildManifest({
     payloadType: fileName === '文本片段' ? 1 : 0,
-    compression: 0,
+    compression: containerGzip ? 1 : 0,
     codec: 0,
     name: fileName,
-    originalSize: container.length,
+    originalSize: fileBytes.length,
     transmittedSize: container.length,
     blockLen,
     sessionId,

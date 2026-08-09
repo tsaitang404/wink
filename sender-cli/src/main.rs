@@ -78,10 +78,18 @@ fn main() {
         .to_string();
     eprintln!("📄 {name} · {} bytes", data.len());
 
-    // 2. 打包容器（无压缩，v0.1 简版；文件名用 UTF-8）
+    // 2. 打包容器（自动判断压缩：≥768B 且 gzip 省 ≥64B 才压缩）
     let name_bytes = name.as_bytes();
-    let container = pack_container(&data, name_bytes);
-    eprintln!("📦 容器 {} bytes", container.len());
+    let (container, container_gzip) = pack_container(&data, name_bytes);
+    eprintln!(
+        "📦 容器 {} bytes{}",
+        container.len(),
+        if container_gzip {
+            format!("（gzip 压缩，原 {} → {}）", data.len(), container.len())
+        } else {
+            String::new()
+        }
+    );
 
     // 3. 随机 session
     let session_id = (std::time::SystemTime::now()
@@ -90,27 +98,36 @@ fn main() {
         .subsec_nanos()
         % 0xffff) as u16;
 
-    // 4. 块长：不传则自动优化 —— 尽量填满所选 QR 版本容量（pad 最少，QR 变化明显）
+    // 4. 帧流 QR 版本：-v 指定，否则按终端宽度选最大可容纳版本
+    let frame_version = qr_version.unwrap_or_else(|| {
+        let cols = terminal_cols().unwrap_or(80);
+        // 可用模块宽 = 列数 × 2（半块字符），减安静区；换算版本 vN = (模块数-17)/4
+        let max_modules = ((cols as usize) * 2).saturating_sub(8).clamp(21, 177);
+        ((max_modules - 17) / 4).clamp(1, 40) as u32
+    });
+
+    // 5. 块长：不传则自动优化 —— 尽量填满所选 QR 版本容量（pad 最少，QR 变化明显）
     //    关键：LT 的 degree 不影响帧大小（一帧始终 block_len 字节，XOR 任意个块长度不变），
     //    所以 block_len 可以 = 容量，每帧装满，数据区几乎全变
     //    （qr.rs 已强制 byte mode 单段，容量表精确，无需分段余量）
     let block_len = block_len.unwrap_or_else(|| {
-        let version = qr_version.unwrap_or_else(|| {
-            let cols = terminal_cols().unwrap_or(80);
-            // 可用模块宽 = 列数 × 2（半块字符），减安静区；换算版本 vN = (模块数-17)/4
-            let max_modules = ((cols as usize) * 2).saturating_sub(8).clamp(21, 177);
-            ((max_modules - 17) / 4).clamp(1, 40) as u32
-        });
-        let capacity = qr_capacity_l(version as usize);
+        let capacity = qr_capacity_l(frame_version as usize);
         // 满容量：capacity - 帧头(20)，下限 64
         capacity.saturating_sub(20).max(64)
     });
 
-    // 5. 元信息 QR：自动选合适版本（内容小就用小码，不跟随 -v）
+    // 6. 元信息 QR：自动选合适版本（内容小就用小码，不跟随 -v）
     let manifest = build_manifest_bytes(
-        name_bytes, &container, session_id, fps, block_len, qr_version,
+        name_bytes,
+        &container,
+        session_id,
+        fps,
+        block_len,
+        frame_version,
+        container_gzip,
+        data.len() as u32,
     );
-    let (manifest_ansi, manifest_version) = qr::render_ansi(&manifest, 2, None);
+    let (manifest_ansi, _manifest_version) = qr::render_ansi(&manifest, 2, None);
 
     // 主循环：显示 manifest → 按空格开始帧流 → 按 q 停止回到 manifest
     let enc = LTEncoder::new(&container, block_len, session_id);
@@ -125,13 +142,21 @@ fn main() {
         // 显示元信息 QR（在主屏幕，不用备用屏）
         eprintln!("📡 元信息 QR —— 接收端扫码预览，按空格开始（q 退出）");
         print!("{manifest_ansi}");
-        // 配置面板：帧率 / 块长 / QR 版本 / 块数 / 总帧数（期望）
+        // 配置面板：帧率 / 块长 / QR 版本（帧流用）/ 块数 / 总帧数（期望）
         eprintln!("──────────────────────────────");
         eprintln!("  帧率      {fps} fps");
         eprintln!("  块长      {block_len} B");
-        eprintln!("  QR 版本   v{manifest_version}");
+        eprintln!("  QR 版本   v{frame_version}（帧流）");
         eprintln!("  块数      {k} 块");
-        eprintln!("  总帧数    约 {total_est} 帧（期望） · 文件 {total_len} B");
+        eprintln!(
+            "  总帧数    约 {total_est} 帧（期望） · 文件 {} B{}",
+            data.len(),
+            if container_gzip {
+                format!("（gzip {} → {}）", data.len(), container.len())
+            } else {
+                String::new()
+            }
+        );
         eprintln!("  文件名    {name}");
         eprintln!("──────────────────────────────");
         std::io::stdout().flush().ok();
@@ -228,35 +253,55 @@ fn parse_arg(args: &[String], key: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
-/// 文件容器：magic WNK1 + nameLen + dataLen + sha256 + data
-/// 与 TS packFile 布局兼容（compression=0，typeLen=0）
-fn pack_container(data: &[u8], name: &[u8]) -> Vec<u8> {
+/// 文件容器：magic WNK1 + compression + nameLen + dataLen + sha256 + data
+/// 与 TS packFile 布局兼容（typeLen=0）
+/// 压缩判断与 TS 一致：≥768 字节且 gzip 后省 ≥64 字节才启用 compression=1
+fn pack_container(data: &[u8], name: &[u8]) -> (Vec<u8>, bool) {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     let sha = hasher.finalize();
 
-    let mut out = Vec::with_capacity(49 + name.len() + data.len());
+    // 尝试 gzip：≥768 字节且压缩后省 ≥64 字节才用（与 TS packFile 对齐）
+    let compressed = if data.len() >= 768 {
+        use std::io::Write;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(data).and_then(|()| enc.finish()).ok()
+    } else {
+        None
+    };
+    let use_gzip = compressed
+        .as_ref()
+        .is_some_and(|c| c.len() + 64 < data.len());
+    let transmitted: &[u8] = match (&compressed, use_gzip) {
+        (Some(c), true) => c,
+        _ => data,
+    };
+
+    let mut out = Vec::with_capacity(49 + name.len() + transmitted.len());
     out.extend_from_slice(&[0x57, 0x4e, 0x4b, 0x31]); // WNK1
-    out.push(0); // compression none
+    out.push(u8::from(use_gzip)); // compression 0=none 1=gzip
     out.extend_from_slice(&(name.len() as u16).to_le_bytes());
     out.extend_from_slice(&0u16.to_le_bytes()); // typeLen = 0
     out.extend_from_slice(&(data.len() as u32).to_le_bytes()); // originalSize
-    out.extend_from_slice(&(data.len() as u32).to_le_bytes()); // transmittedSize
-    out.extend_from_slice(sha.as_slice()); // SHA-256（真实计算）
+    out.extend_from_slice(&(transmitted.len() as u32).to_le_bytes()); // transmittedSize
+    out.extend_from_slice(sha.as_slice()); // SHA-256（对原始 data 计算）
     out.extend_from_slice(name);
-    out.extend_from_slice(data);
-    out
+    out.extend_from_slice(transmitted);
+    (out, use_gzip)
 }
 
 /// 元信息帧（manifest）：与 TS packManifest 布局一致
+#[allow(clippy::too_many_arguments)]
 fn build_manifest_bytes(
     name: &[u8],
     container: &[u8],
     session_id: u16,
     fps: u32,
     block_len: usize,
-    qr_version: Option<u32>,
+    qr_version: u32,
+    compression: bool,
+    original_size: u32,
 ) -> Vec<u8> {
     let k = container.len().div_ceil(block_len).max(1);
     let est = (k as u64 * 115 / 100).div_ceil(u64::from(fps)) as u32;
@@ -264,16 +309,16 @@ fn build_manifest_bytes(
     out.extend_from_slice(&[0x57, 0x4e, 0x4b, 0x4d]); // WNKM
     out.push(1); // version
     out.push(0); // payloadType file
-    out.push(0); // compression
+    out.push(u8::from(compression)); // compression（与容器一致，0=none 1=gzip）
     out.push(0); // codec 黑白
     out.extend_from_slice(&(name.len() as u16).to_le_bytes());
-    out.extend_from_slice(&(container.len() as u32).to_le_bytes()); // originalSize
-    out.extend_from_slice(&(container.len() as u32).to_le_bytes()); // transmittedSize
+    out.extend_from_slice(&original_size.to_le_bytes()); // originalSize（原始文件大小）
+    out.extend_from_slice(&(container.len() as u32).to_le_bytes()); // transmittedSize（传输大小）
     out.extend_from_slice(&(k as u16).to_le_bytes());
     out.extend_from_slice(&(block_len as u16).to_le_bytes());
     out.extend_from_slice(&session_id.to_le_bytes());
-    // qrVersion：帧流使用的版本（用户 -v 指定；未指定写 0 = 自动/终端自适应）
-    out.extend_from_slice(&(qr_version.unwrap_or(0) as u16).to_le_bytes());
+    // qrVersion：帧流实际使用的 QR 版本（-v 指定或终端自适应）
+    out.extend_from_slice(&(qr_version as u16).to_le_bytes());
     out.extend_from_slice(&(fps as u16).to_le_bytes());
     out.extend_from_slice(&est.to_le_bytes());
     out.extend_from_slice(&fnv1a(container).to_le_bytes()); // payloadFnv
