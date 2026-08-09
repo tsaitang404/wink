@@ -1,6 +1,6 @@
 # wink
 
-屏幕/终端对摄像头传输文件的光学传输工具。发送端把文件编码成喷泉码 QR 帧流，接收端用摄像头解码重建文件。传输过程不经过任何网络。
+只靠屏幕和镜头传输文件的工具。发送端把文件编码成喷泉码 QR 帧流，接收端用摄像头扫码重建文件。传输过程不经过任何网络，不需要物理连接。
 
 ## Releases
 
@@ -12,7 +12,7 @@
 | **wink-receiver.html** | 手机浏览器 | 通过 GitHub Pages 部署 | 浏览器 |
 
 Release 下载：https://github.com/tsaitang404/wink/releases
-接收端在线版：https://tsaitang404.github.io/wink/（每次 push 自动更新）
+接收端在线版：https://tsaitang404.github.io/wink/（自动更新）
 
 ## 快速开始
 
