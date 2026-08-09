@@ -48,16 +48,24 @@ async function startCamera() {
       video = $('cam') as HTMLVideoElement;
       video.srcObject = stream;
     }
+    // 强制重新激活画面（隐藏后 play 可能暂停）
+    video.srcObject = stream;
     await video.play();
+    // 彻底重置接收状态（新会话）
+    decoding = false;
+    decoder = null;
+    manifest = null;
+    currentIdentity = '';
+    framesNeeded = 0;
+    framesGot = 0;
+    fpsWindow = [];
     // 状态机：从隐藏/完成态恢复 → 原样显示
     leaveHiddenMode();
     $('manifest-card').style.display = 'none';
     $('progress-wrap').style.display = 'none';
     $('result').style.display = 'none';
-    setStatus('等待 wink… 对准发送端的二维码');
-    // 传输中不显示停止按钮，只保留镜头聚焦按钮
     $('start-btn').style.display = 'none';
-    $('cam-toggle').style.display = 'block';
+    setStatus('等待 wink… 对准发送端的二维码');
     decoding = true;
     requestAnimationFrame(decodeLoop);
   } catch (e) {
@@ -210,40 +218,46 @@ function renderFrameTimeline() {
   const seqs = decoder.receivedSeqs();
   const timeline = $('frame-timeline');
   timeline.innerHTML = '';
-  if (seqs.size === 0) return;
-  const sorted = [...seqs].sort((a, b) => a - b);
-  const min = sorted[0]!;
-  const max = sorted[sorted.length - 1]!;
-  const span = max - min + 1;
-  // 单行自适应宽度：窗口太大时分段聚合（每格代表若干帧）
+  // 横轴 = 总帧数（0..framesNeeded），有效帧数/总帧 —— 完成时全绿
+  const total = Math.max(1, framesNeeded);
   const CELLS = 120;
-  if (span <= CELLS) {
-    for (let i = 0; i < span; i++) {
-      const s = min + i;
-      const div = document.createElement('div');
-      div.className = 'ft' + (seqs.has(s) ? ' got' : '');
-      div.title = `帧 ${s}`;
-      timeline.appendChild(div);
-    }
-  } else {
-    // 聚合：每格覆盖 span/CELLS 帧，区间内任一收到即绿
-    const bucket = span / CELLS;
-    for (let c = 0; c < CELLS; c++) {
-      const from = Math.floor(min + c * bucket);
-      const to = Math.floor(min + (c + 1) * bucket);
-      let got = false;
-      for (let s = from; s < to; s++) {
-        if (seqs.has(s)) {
-          got = true;
-          break;
-        }
+  // 每格覆盖的帧数（总帧超过格子数时分段聚合，任一收到即绿）
+  const bucket = total / CELLS;
+  for (let c = 0; c < CELLS; c++) {
+    const from = Math.floor(c * bucket);
+    const to = Math.min(total, Math.floor((c + 1) * bucket));
+    let got = false;
+    for (let s = from; s < to; s++) {
+      if (seqs.has(s)) {
+        got = true;
+        break;
       }
-      const div = document.createElement('div');
-      div.className = 'ft' + (got ? ' got' : '');
-      div.title = `帧 ${from}-${to}`;
-      timeline.appendChild(div);
     }
+    const div = document.createElement('div');
+    div.className = 'ft' + (got ? ' got' : '');
+    const pctLow = Math.floor((from / total) * 100);
+    const pctHigh = Math.ceil((to / total) * 100);
+    div.title = `帧 ${from}-${to} · ${pctLow}-${pctHigh}%`;
+    // 点击悬浮显示帧号/百分比
+    div.addEventListener('click', (e) => {
+      const tip = $('blk-tip') as HTMLElement;
+      tip.textContent = `帧 ${from}-${to} · ${pctLow}-${pctHigh}%`;
+      tip.style.display = 'block';
+      tip.style.left = `${e.clientX + 8}px`;
+      tip.style.top = `${e.clientY - 30}px`;
+    });
+    timeline.appendChild(div);
   }
+  // 右侧总百分比标签：只统计 0..framesNeeded 范围内的有效帧
+  let inRange = 0;
+  for (let s = 0; s < total; s++) {
+    if (seqs.has(s)) inRange++;
+  }
+  const pctTotal = Math.min(100, Math.floor((inRange / total) * 100));
+  const pctSpan = document.createElement('span');
+  pctSpan.className = 'ft-pct';
+  pctSpan.textContent = `${pctTotal}%`;
+  timeline.appendChild(pctSpan);
 }
 
 function updateProgress(dec: LTDecoder, got: number) {
@@ -299,6 +313,15 @@ async function onComplete(container: Uint8Array) {
       setStatus('❌ SHA-256 校验失败，文件损坏！');
       return;
     }
+    // 完成时进度条/位图强制 100% 全绿（可能早于 1.15K 帧解完）
+    $('progress-fill').style.width = '100%';
+    $('progress-stats').textContent = `✅ 有效帧 ${decoder?.framesNew ?? 0}/${framesNeeded} · 已解块 ${decoder?.solvedCount ?? 0}/${decoder?.k ?? 0} · 完成`;
+    const timeline = $('frame-timeline');
+    for (const child of Array.from(timeline.children)) {
+      if (child.classList.contains('ft')) child.className = 'ft got';
+    }
+    const pctSpan = timeline.querySelector('.ft-pct');
+    if (pctSpan) pctSpan.textContent = '100%';
     showResult(file.name, file.type, file.bytes);
   } catch (e) {
     setStatus(`❌ 解析失败: ${(e as Error).message}`);
@@ -399,19 +422,10 @@ $('start-btn').addEventListener('click', () => {
   startCamera();
 });
 
-// 镜头点击聚焦：迷你窗点击 → 放大并继续接收；全屏点击 → 缩小
+// 镜头点击：隐藏态点击 → 恢复继续接收
 const camVideo = $('cam');
 camVideo.addEventListener('click', () => {
   if (miniMode) {
-    // 迷你窗点击 → 放大继续接收
     startCamera();
-  }
-});
-$('cam-toggle').addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (miniMode) {
-    startCamera();
-  } else {
-    enterHiddenMode();
   }
 });
