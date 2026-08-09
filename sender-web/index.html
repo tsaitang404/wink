@@ -83,6 +83,14 @@
       <span id="info-text">选文件后显示元信息二维码，接收端扫码可预览</span>
     </div>
 
+    <div id="sender-progress-wrap" style="display:none;width:100%;max-width:420px;margin:8px 0">
+      <div class="param-row"><span>帧进度（点击/拖动跳转）</span><span id="seq-label">0</span></div>
+      <input type="range" id="seq-slider" min="0" max="1000" value="0" style="width:100%" />
+      <div class="param-row"><span>块状态（点击重发该块）</span><span id="block-count"></span></div>
+      <div id="sender-blocks" style="display:grid;gap:2px;grid-template-columns:repeat(auto-fill,8px);background:#161616;border-radius:8px;padding:6px;max-height:100px;overflow-y:auto"></div>
+      <div class="hint">红块=可能未收到，点击重发（发送该块的 degree-1 帧）</div>
+    </div>
+
     <div style="display:flex;gap:8px;margin:12px 0">
       <button id="start-btn" class="btn green" style="display:none">▶ 开始传输</button>
       <button id="stop-btn" class="btn" style="display:none">■ 停止</button>

@@ -55,8 +55,8 @@ async function startCamera() {
     $('progress-wrap').style.display = 'none';
     $('result').style.display = 'none';
     setStatus('等待 wink… 对准发送端的二维码');
-    $('start-btn').textContent = '⏹ 停止接收';
-    $('start-btn').classList.add('running');
+    // 传输中不显示停止按钮，只保留镜头聚焦按钮
+    $('start-btn').style.display = 'none';
     $('cam-toggle').style.display = 'block';
     decoding = true;
     requestAnimationFrame(decodeLoop);
@@ -65,24 +65,12 @@ async function startCamera() {
   }
 }
 
-function stopCamera() {
-  decoding = false;
-  if (stream) {
-    stream.getTracks().forEach((t) => t.stop());
-    stream = null;
-  }
-  video.srcObject = null;
-  $('start-btn').textContent = '▶ 启动摄像头';
-  $('start-btn').classList.remove('running');
-  $('cam-toggle').style.display = 'none';
-  setStatus('已停止 —— 点击启动摄像头重新开始');
-}
-
 function enterMiniMode() {
   miniMode = true;
   $('video-wrap').classList.add('mini');
-  $('start-btn').textContent = '⏹ 停止接收';
-  setStatus('✅ 接收完成 —— 点击镜头查看/继续接收');
+  $('start-btn').style.display = 'inline-block';
+  $('start-btn').textContent = '▶ 继续接收';
+  setStatus('✅ 接收完成 —— 点击继续接收');
 }
 
 function leaveMiniMode() {
@@ -187,15 +175,54 @@ function fmtDuration(s: number): string {
 function showStreamHeader(h: ReturnType<typeof parseFrame> extends null ? never : Parameters<typeof streamIdentity>[0]) {
   $('progress-wrap').style.display = 'block';
   $('progress-stats').textContent = `接收中… 帧 ${framesGot}/${framesNeeded}`;
-  // 块网格
+  // 帧时间线：按 seq 顺序，已收绿
+  renderFrameTimeline();
+  // 块网格：真实 K 块，三色状态，点击气泡
   const grid = $('block-grid');
   grid.innerHTML = '';
-  const cellCount = Math.min(h.k, 400);
-  for (let i = 0; i < cellCount; i++) {
+  const tip = $('blk-tip') as HTMLElement;
+  for (let i = 0; i < h.k; i++) {
     const d = document.createElement('div');
     d.className = 'blk';
     d.dataset.idx = String(i);
+    d.addEventListener('click', (e) => {
+      tip.textContent = `块 #${i}${stateLabel(d.className)}`;
+      tip.style.display = 'block';
+      tip.style.left = `${e.clientX + 8}px`;
+      tip.style.top = `${e.clientY - 30}px`;
+    });
     grid.appendChild(d);
+  }
+  // 点击其他区域隐藏气泡
+  grid.addEventListener('mouseleave', () => {
+    tip.style.display = 'none';
+  });
+}
+
+function stateLabel(cls: string): string {
+  if (cls.includes('solved')) return ' · 已解出 ✅';
+  if (cls.includes('pending')) return ' · 收到未解出 ⏳';
+  return ' · 未收到';
+}
+
+function renderFrameTimeline() {
+  if (!decoder) return;
+  const seqs = decoder.receivedSeqs();
+  const timeline = $('frame-timeline');
+  timeline.innerHTML = '';
+  // 显示最近 200 帧窗口（seq 回绕保护：按最小值起）
+  if (seqs.size === 0) return;
+  const sorted = [...seqs].sort((a, b) => a - b);
+  const min = sorted[0]!;
+  const max = Math.max(min + 199, sorted[sorted.length - 1]!);
+  const total = max - min + 1;
+  const cells = Math.min(total, 240);
+  for (let i = 0; i < cells; i++) {
+    const s = min + i;
+    const div = document.createElement('div');
+    div.className = 'ft' + (seqs.has(s) ? ' got' : '');
+    div.title = `帧 ${s}`;
+    timeline.appendChild(div);
   }
 }
 
@@ -205,15 +232,14 @@ function updateProgress(dec: LTDecoder, got: number) {
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(0);
   const dupRate = got > 0 ? ((dec.framesDup / (dec.framesNew + dec.framesDup)) * 100).toFixed(0) : '0';
   $('progress-stats').textContent = `帧 ${got}/${framesNeeded} · 已解块 ${dec.solvedCount}/${dec.k} · ${elapsed}s · 重复 ${dupRate}%`;
-  // 更新块网格（聚合显示 solved 比例）
+  // 帧时间线（按 seq 顺序）
+  renderFrameTimeline();
+  // 块网格：真实 K 块逐块三色（灰=未收 橙=收到未解出 绿=已解出）
   const grid = $('block-grid');
   const cells = grid.children;
-  if (cells.length > 0) {
-    const ratio = dec.solvedCount / dec.k;
-    const filled = Math.floor(ratio * cells.length);
-    for (let i = 0; i < cells.length; i++) {
-      cells[i]!.className = i < filled ? 'blk solved' : 'blk';
-    }
+  for (let i = 0; i < cells.length; i++) {
+    const st = dec.blockState(i);
+    cells[i]!.className = st === 2 ? 'blk solved' : st === 1 ? 'blk pending' : 'blk';
   }
 }
 
@@ -322,11 +348,8 @@ function addFileToList(f: { name: string; type: string; bytes: Uint8Array; time:
 }
 
 $('start-btn').addEventListener('click', () => {
-  if ($('start-btn').classList.contains('running')) {
-    stopCamera();
-  } else {
-    startCamera();
-  }
+  // 未启动时点击 → 启动；完成后（迷你态）点击 → 恢复全屏继续
+  startCamera();
 });
 
 // 镜头点击聚焦：迷你窗点击 → 放大并继续接收；全屏点击 → 缩小

@@ -143,7 +143,10 @@ function start() {
   seq = 0;
   $('start-btn').style.display = 'none';
   $('stop-btn').style.display = 'inline-block';
+  $('sender-progress-wrap').style.display = 'block';
   $('status').textContent = '🚀 传输中… 保持对准';
+  initSenderBlocks(encoder.k);
+  setupSeqSlider(encoder.k);
   streamTimer = setInterval(() => {
     if (!encoder) return;
     const block = encoder.encode(seq);
@@ -152,13 +155,99 @@ function start() {
       block,
     );
     void drawQr(frame);
+    updateSeqSlider(seq);
     seq = (seq + 1) >>> 0;
   }, 1000 / fps);
+}
+
+/** 发送端块网格：红块=degree-1 未发出（可能未收到），点击重发该块 */
+function initSenderBlocks(k: number) {
+  const grid = $('sender-blocks');
+  grid.innerHTML = '';
+  $('block-count').textContent = `K=${k} 块`;
+  for (let i = 0; i < k; i++) {
+    const d = document.createElement('div');
+    d.className = 'blk snd';
+    d.dataset.idx = String(i);
+    d.style.cssText = 'width:8px;height:8px;border-radius:2px;background:#3a3a3a;cursor:pointer';
+    d.title = `块 ${i}`;
+    d.addEventListener('click', () => resendBlock(i));
+    grid.appendChild(d);
+  }
+}
+
+/** 重发指定块：扫描找到该块的 degree-1 帧 seq，临时连续发送 10 帧 */
+let resendTimer: ReturnType<typeof setInterval> | null = null;
+function resendBlock(b: number) {
+  if (!encoder || !container) return;
+  const s = encoder.findDeg1Seq(b, seq);
+  if (s === null) {
+    $('status').textContent = `⚠️ 块 ${b}：8192 帧内未找到 degree-1 帧`;
+    return;
+  }
+  // 中断当前流 10 帧，发送该块重试
+  if (streamTimer) clearInterval(streamTimer);
+  if (resendTimer) clearInterval(resendTimer);
+  const { fps } = currentParams();
+  let n = 0;
+  resendTimer = setInterval(() => {
+    const block = encoder!.encode(s);
+    const frame = packFrame(
+      { sessionId, seq: s, k: encoder!.k, blockLen: currentParams().blockLen, totalLen: container!.length, payloadFnv: fnv1a(container!) },
+      block,
+    );
+    void drawQr(frame);
+    $('status').textContent = `🔁 重发块 #${b}（帧 ${s}）… ${n + 1}/10`;
+    n++;
+    if (n >= 10) {
+      if (resendTimer) clearInterval(resendTimer);
+      // 恢复主流
+      if (streamTimer) clearInterval(streamTimer);
+      streamTimer = setInterval(() => {
+        if (!encoder) return;
+        const block2 = encoder.encode(seq);
+        const frame2 = packFrame(
+          { sessionId, seq, k: encoder.k, blockLen: currentParams().blockLen, totalLen: container!.length, payloadFnv: fnv1a(container!) },
+          block2,
+        );
+        void drawQr(frame2);
+        updateSeqSlider(seq);
+        seq = (seq + 1) >>> 0;
+      }, 1000 / fps);
+      $('status').textContent = '🚀 传输中… 保持对准';
+    }
+  }, 1000 / fps);
+}
+
+/** 进度条：seq 位置显示 + 拖动跳转 */
+function setupSeqSlider(k: number) {
+  const slider = $('seq-slider') as HTMLInputElement;
+  const max = Math.max(1000, Math.ceil(k * 1.3));
+  slider.max = String(max);
+  slider.value = '0';
+  $('seq-label').textContent = '0';
+  slider.addEventListener('input', () => {
+    const target = Number(slider.value) >>> 0;
+    $('seq-label').textContent = String(target);
+    // 拖动时若在传输中，跳转到该位置继续（重新渲染下一帧）
+    if (streaming && encoder) {
+      seq = target;
+      $('status').textContent = `⏭ 跳到帧 ${target} 继续`;
+    }
+  });
+}
+
+function updateSeqSlider(s: number) {
+  const slider = $('seq-slider') as HTMLInputElement;
+  if (!slider || Number(slider.value) > s) return; // 用户拖动中不覆盖
+  slider.value = String(s);
+  $('seq-label').textContent = String(s);
 }
 
 function stop() {
   streaming = false;
   if (streamTimer) clearInterval(streamTimer);
+  if (resendTimer) clearInterval(resendTimer);
   $('start-btn').style.display = 'inline-block';
   $('stop-btn').style.display = 'none';
   $('status').textContent = '已停止 —— 可调整参数重新开始';

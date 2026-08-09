@@ -139,6 +139,28 @@ export class LTEncoder {
     }
     return new Uint8Array(out.buffer, 0, this.blockLen);
   }
+
+  /**
+   * 找到生成 degree-1 帧且只包含目标块的 seq（重发指定块用）。
+   * 扫描有限范围（默认 8192 个候选），找到即返回；找不到返回 null。
+   * 该帧与普通帧完全同构，接收端用同一 seq 重新计算 indices → 直接解出该块。
+   */
+  findDeg1Seq(block: number, fromSeq = 0, scanLimit = 8192): number | null {
+    if (block < 0 || block >= this.k) return null;
+    for (let i = 0; i < scanLimit; i++) {
+      const s = (fromSeq + i) >>> 0;
+      const idx = frameIndices(this.k, this.cdf, this.sessionId, s);
+      if (idx.length === 1 && idx[0] === block) return s;
+    }
+    return null;
+  }
+
+  /** 枚举所有 seq → degree-1 块映射（用于"已发送哪些块"视图） */
+  deg1BlockAt(seq: number): number | null {
+    const idx = frameIndices(this.k, this.cdf, this.sessionId, seq);
+    if (idx.length === 1) return idx[0];
+    return null;
+  }
 }
 
 interface PendingFrame {
@@ -169,6 +191,18 @@ export class LTDecoder {
 
   get isComplete(): boolean {
     return this.solvedCount >= this.k;
+  }
+
+  /** 块状态：0=灰（未涉及）1=红（收到帧引用但未解出）2=绿（已解出） */
+  blockState(b: number): 0 | 1 | 2 {
+    if (this.solved[b]) return 2;
+    if (this.byBlock.has(b)) return 1;
+    return 0;
+  }
+
+  /** 已收到的帧 seq 位图（进度条按帧顺序显示用） */
+  receivedSeqs(): Set<number> {
+    return this.seen;
   }
 
   addFrame(seq: number, block: Uint8Array): void {
