@@ -23,7 +23,8 @@ Release 下载：https://github.com/tsaitang404/wink/releases
 ### 终端发送
 ```bash
 # 任意 Linux（x86_64 或 ARM64），直接跑，无需安装
-./wink-linux-x86_64 send secret.txt --fps 30
+chmod +x wink-linux-x86_64
+./wink-linux-x86_64  secret.txt 
 # → 终端显示元信息 QR（接收端先扫码预览）
 # → 按 Enter 开始喷泉帧流
 # → 按 q 停止，回到元信息 QR
