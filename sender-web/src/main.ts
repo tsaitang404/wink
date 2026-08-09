@@ -229,8 +229,10 @@ function updateSeqSlider(s: number) {
   const slider = $('seq-slider') as HTMLInputElement;
   if (!slider) return;
   if (document.activeElement === slider) return; // 拖动中不覆盖
-  slider.value = String(s % (Number(slider.max) + 1));
-  $('seq-label').textContent = `${s % (Number(slider.max) + 1)} / ${totalFrames}`;
+  // 总帧数进度：seq 单调增长，进度 = seq/总帧数（不取模，到 100% 后保持）
+  const shown = Math.min(s, totalFrames);
+  slider.value = String(shown);
+  $('seq-label').textContent = `${s} / ${totalFrames}`;
 }
 
 /** 块输入框：从此块开始 / 重播此块 */
