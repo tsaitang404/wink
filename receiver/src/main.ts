@@ -45,7 +45,7 @@ async function startCamera() {
     video = $('cam') as HTMLVideoElement;
     video.srcObject = stream;
     await video.play();
-    setStatus('等待旗语… 对准发送端的二维码');
+    setStatus('等待 wink… 对准发送端的二维码');
     $('start-btn').textContent = '📷 摄像头已启动';
     decoding = true;
     requestAnimationFrame(decodeLoop);

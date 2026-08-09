@@ -1,4 +1,4 @@
-// wink —— 眨眼式光学文件传输（终端发送端）
+// wink —— wink 光学文件传输（终端发送端）
 //
 // 流程：wink send <file> → 显示元信息 QR → 按回车开始 → 喷泉帧流
 // 发送端零依赖：musl 静态编译单文件
@@ -122,7 +122,7 @@ fn main() {
 
 fn print_usage() {
     eprintln!(
-        "wink {VERSION} — 眨眼式光学文件传输\n\
+        "wink {VERSION} — 对镜头 wink 传输文件\n\
          \n\
          用法:\n\
          \x20 wink send <file> [--fps 30] [--block 128]\n\
