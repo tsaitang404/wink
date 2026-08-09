@@ -220,27 +220,30 @@ function renderFrameTimeline() {
   // 横轴 = 总帧数（0..framesNeeded），有效帧数/总帧 —— 完成时全绿
   const total = Math.max(1, framesNeeded);
   const CELLS = 120;
-  // 每格覆盖的帧数（总帧超过格子数时分段聚合，任一收到即绿）
+  // 每格覆盖的帧数（总帧超过格子数时分段聚合）
   const bucket = total / CELLS;
   for (let c = 0; c < CELLS; c++) {
     const from = Math.floor(c * bucket);
     const to = Math.min(total, Math.floor((c + 1) * bucket));
-    let got = false;
+    const count = to - from;
+    let gotCount = 0;
     for (let s = from; s < to; s++) {
-      if (seqs.has(s)) {
-        got = true;
-        break;
-      }
+      if (seqs.has(s)) gotCount++;
     }
+    // 三态：全收=绿 部分=橙 无=灰
+    let cls = 'ft';
+    if (gotCount === 0) cls = 'ft';
+    else if (gotCount >= count) cls = 'ft got';
+    else cls = 'ft partial';
     const div = document.createElement('div');
-    div.className = 'ft' + (got ? ' got' : '');
+    div.className = cls;
     const pctLow = Math.floor((from / total) * 100);
     const pctHigh = Math.ceil((to / total) * 100);
-    div.title = `帧 ${from}-${to} · ${pctLow}-${pctHigh}%`;
+    div.title = `帧 ${from}-${to} · ${pctLow}-${pctHigh}% · 收到 ${gotCount}/${count}`;
     // 点击悬浮显示帧号/百分比
     div.addEventListener('click', (e) => {
       const tip = $('blk-tip') as HTMLElement;
-      tip.textContent = `帧 ${from}-${to} · ${pctLow}-${pctHigh}%`;
+      tip.textContent = `帧 ${from}-${to} · ${pctLow}-${pctHigh}% · 收到 ${gotCount}/${count}`;
       tip.style.display = 'block';
       tip.style.left = `${e.clientX + 8}px`;
       tip.style.top = `${e.clientY - 30}px`;
