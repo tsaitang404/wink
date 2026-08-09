@@ -11,7 +11,8 @@
     clippy::cast_possible_wrap,
     clippy::many_single_char_names,
     clippy::cast_lossless,
-    clippy::items_after_statements
+    clippy::items_after_statements,
+    dead_code
 )]
 
 pub const FRAME_MAGIC: u8 = 0x57; // 'W'

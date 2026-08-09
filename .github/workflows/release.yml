@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci || npm install
+      - run: npx vite build --config sender-web/vite.config.ts
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - run: cargo build --release --target x86_64-unknown-linux-musl
+        working-directory: sender-cli
+
+      - name: Assemble artifacts
+        run: |
+          mkdir -p dist/release
+          cp sender-cli/target/x86_64-unknown-linux-musl/release/wink dist/release/wink-linux-x86_64
+          cp sender-web/dist/index.html dist/release/wink-sender.html
+          cp receiver/dist/index.html dist/release/wink-receiver.html 2>/dev/null || true
+          cd dist/release
+          sha256sum * > SHA256SUMS.txt
+          ls -la
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/release/*
+          draft: true
