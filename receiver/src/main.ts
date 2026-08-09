@@ -297,12 +297,11 @@ function updateProgress(dec: LTDecoder, got: number) {
   const pct = Math.min(100, (dec.solvedCount / Math.max(1, dec.k)) * 100);
   $('progress-fill').style.width = `${pct}%`;
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(0);
-  // 有效帧 = 新帧（去重后）；无效帧 = 重复帧；总收 = 有效+无效（帧只作估计参考）
+  // 有效帧 = 新帧（去重后）；无效帧 = 重复帧（总收 = 有效+无效，无需单列）
   const valid = dec.framesNew;
   const invalid = dec.framesDup;
-  const totalGot = valid + invalid;
   $('progress-stats').textContent =
-    `块 ${dec.solvedCount}/${dec.k} (${pct.toFixed(0)}%) · 帧 ${valid}/期望~${framesNeeded} · 无效 ${invalid} · 总收 ${totalGot} · ${elapsed}s`;
+    `块 ${dec.solvedCount}/${dec.k} (${pct.toFixed(0)}%) · 帧 ${valid}/期望~${framesNeeded} · 无效 ${invalid} · ${elapsed}s`;
   // 码率检测：总平均速度
   updateFpsHint(dec);
   // 帧时间线（丢帧诊断，非进度）
@@ -349,7 +348,7 @@ async function onComplete(container: Uint8Array) {
     $('progress-fill').style.width = '100%';
     const valid = decoder?.framesNew ?? 0;
     $('progress-stats').textContent =
-      `✅ 完成 · 块 ${decoder?.solvedCount ?? 0}/${decoder?.k ?? 0} (100%) · 帧 ${valid}/期望~${framesNeeded} · 无效 ${decoder?.framesDup ?? 0} · 总收 ${valid + (decoder?.framesDup ?? 0)}`;
+      `✅ 完成 · 块 ${decoder?.solvedCount ?? 0}/${decoder?.k ?? 0} (100%) · 帧 ${valid}/期望~${framesNeeded} · 无效 ${decoder?.framesDup ?? 0}`;
     // 块网格已全绿（真实解出状态）；帧位图如实保留（诊断用）
     showResult(file.name, file.type, file.bytes);
   } catch (e) {
