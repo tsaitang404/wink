@@ -11,7 +11,7 @@
 
 export const FRAME_MAGIC = 0x57; // 'W'
 export const FRAME_VERSION = 0x01;
-export const HEADER_LEN = 16;
+export const HEADER_LEN = 20; // magic(1)+version(1)+sessionId(2)+seq(4)+k(2)+blockLen(2)+totalLen(4)+payloadFnv(4)
 
 export const FILE_MAGIC = new Uint8Array([0x57, 0x4e, 0x4b, 0x31]); // "WNK1"
 export const TEXT_MAGIC = new Uint8Array([0x57, 0x4e, 0x4b, 0x54]); // "WNKT"
