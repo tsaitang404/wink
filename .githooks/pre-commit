@@ -1,0 +1,25 @@
+#!/bin/sh
+# wink pre-commit 钩子：提交前自动跑编码测试
+# - TS 类型检查（tsc --noEmit，抓 CI 的 ts job 错误）
+# - TS 单元测试
+# 任一步失败则拒绝提交。
+
+echo "🔍 pre-commit: 运行编码测试…"
+
+# 1. TypeScript 类型检查
+if ! npm run typecheck >/dev/null 2>&1; then
+  echo "❌ pre-commit: tsc --noEmit 失败（类型错误）"
+  npm run typecheck 2>&1 | grep -E "error TS" | head -20
+  exit 1
+fi
+echo "✅ 类型检查通过"
+
+# 2. TS 单元测试
+if ! npm test >/dev/null 2>&1; then
+  echo "❌ pre-commit: npm test 失败"
+  npm test 2>&1 | grep -E "✖|fail" | head -20
+  exit 1
+fi
+echo "✅ 单元测试通过"
+
+echo "🎉 pre-commit: 全部通过，允许提交"

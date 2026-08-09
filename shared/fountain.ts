@@ -158,7 +158,7 @@ export class LTEncoder {
   /** 枚举所有 seq → degree-1 块映射（用于"已发送哪些块"视图） */
   deg1BlockAt(seq: number): number | null {
     const idx = frameIndices(this.k, this.cdf, this.sessionId, seq);
-    if (idx.length === 1) return idx[0];
+    if (idx.length === 1 && idx[0] !== undefined) return idx[0];
     return null;
   }
 }
