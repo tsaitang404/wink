@@ -78,14 +78,14 @@ fn main() {
         .to_string();
     eprintln!("📄 {name} · {} bytes", data.len());
 
-    // 2. 打包容器（自动判断压缩：≥768B 且 gzip 省 ≥64B 才压缩）
+    // 2. 打包容器（自动判断压缩：≥768B 且 xz 省 ≥64B 才压缩）
     let name_bytes = name.as_bytes();
-    let (container, container_gzip) = pack_container(&data, name_bytes);
+    let (container, container_compressed) = pack_container(&data, name_bytes);
     eprintln!(
         "📦 容器 {} bytes{}",
         container.len(),
-        if container_gzip {
-            format!("（gzip 压缩，原 {} → {}）", data.len(), container.len())
+        if container_compressed {
+            format!("（xz 压缩，原 {} → {}）", data.len(), container.len())
         } else {
             String::new()
         }
@@ -124,7 +124,7 @@ fn main() {
         fps,
         block_len,
         frame_version,
-        container_gzip,
+        if container_compressed { 3 } else { 0 },
         data.len() as u32,
     );
     let (manifest_ansi, _manifest_version) = qr::render_ansi(&manifest, 2, None);
@@ -151,8 +151,8 @@ fn main() {
         eprintln!(
             "  总帧数    约 {total_est} 帧（期望） · 文件 {} B{}",
             data.len(),
-            if container_gzip {
-                format!("（gzip {} → {}）", data.len(), container.len())
+            if container_compressed {
+                format!("（xz {} → {}）", data.len(), container.len())
             } else {
                 String::new()
             }
@@ -255,32 +255,33 @@ fn parse_arg(args: &[String], key: &str, default: u32) -> u32 {
 
 /// 文件容器：magic WNK1 + compression + nameLen + dataLen + sha256 + data
 /// 与 TS packFile 布局兼容（typeLen=0）
-/// 压缩判断与 TS 一致：≥768 字节且 gzip 后省 ≥64 字节才启用 compression=1
+/// 压缩判断：≥768 字节且 xz 后省 ≥64 字节才启用 compression=3（xz）
 fn pack_container(data: &[u8], name: &[u8]) -> (Vec<u8>, bool) {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     let sha = hasher.finalize();
 
-    // 尝试 gzip：≥768 字节且压缩后省 ≥64 字节才用（与 TS packFile 对齐）
+    // 尝试 xz：≥768 字节且压缩后省 ≥64 字节才用（xz2 = liblzma 绑定，真正压缩）
     let compressed = if data.len() >= 768 {
-        use std::io::Write;
-        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        enc.write_all(data).and_then(|()| enc.finish()).ok()
+        let mut enc = xz2::write::XzEncoder::new(Vec::new(), 6);
+        std::io::Write::write_all(&mut enc, data)
+            .and_then(|()| enc.finish())
+            .ok()
     } else {
         None
     };
-    let use_gzip = compressed
+    let use_xz = compressed
         .as_ref()
         .is_some_and(|c| c.len() + 64 < data.len());
-    let transmitted: &[u8] = match (&compressed, use_gzip) {
+    let transmitted: &[u8] = match (&compressed, use_xz) {
         (Some(c), true) => c,
         _ => data,
     };
 
     let mut out = Vec::with_capacity(49 + name.len() + transmitted.len());
     out.extend_from_slice(&[0x57, 0x4e, 0x4b, 0x31]); // WNK1
-    out.push(u8::from(use_gzip)); // compression 0=none 1=gzip
+    out.push(if use_xz { 3 } else { 0 }); // compression 0=none 3=xz
     out.extend_from_slice(&(name.len() as u16).to_le_bytes());
     out.extend_from_slice(&0u16.to_le_bytes()); // typeLen = 0
     out.extend_from_slice(&(data.len() as u32).to_le_bytes()); // originalSize
@@ -288,7 +289,7 @@ fn pack_container(data: &[u8], name: &[u8]) -> (Vec<u8>, bool) {
     out.extend_from_slice(sha.as_slice()); // SHA-256（对原始 data 计算）
     out.extend_from_slice(name);
     out.extend_from_slice(transmitted);
-    (out, use_gzip)
+    (out, use_xz)
 }
 
 /// 元信息帧（manifest）：与 TS packManifest 布局一致
@@ -300,7 +301,7 @@ fn build_manifest_bytes(
     fps: u32,
     block_len: usize,
     qr_version: u32,
-    compression: bool,
+    compression: u8,
     original_size: u32,
 ) -> Vec<u8> {
     let k = container.len().div_ceil(block_len).max(1);
@@ -309,7 +310,7 @@ fn build_manifest_bytes(
     out.extend_from_slice(&[0x57, 0x4e, 0x4b, 0x4d]); // WNKM
     out.push(1); // version
     out.push(0); // payloadType file
-    out.push(u8::from(compression)); // compression（与容器一致，0=none 1=gzip）
+    out.push(compression); // compression（与容器一致，0=none 3=xz）
     out.push(0); // codec 黑白
     out.extend_from_slice(&(name.len() as u16).to_le_bytes());
     out.extend_from_slice(&original_size.to_le_bytes()); // originalSize（原始文件大小）
@@ -423,8 +424,9 @@ fn read_command_line() -> Option<String> {
     INPUT_BUF.with(|cell| {
         let mut line = cell.borrow_mut();
         for &b in &buf[..n as usize] {
-            // 独立空格（累积缓冲为空时按下）→ 立即返回暂停命令
-            if b == b' ' && line.is_empty() {
+            // 空格 = 暂停（无视已累积的输入内容，立即返回并清空缓冲）
+            if b == b' ' {
+                line.clear();
                 return Some(" ".to_string());
             }
             if b == b'\n' || b == b'\r' {

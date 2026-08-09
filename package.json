@@ -24,5 +24,8 @@
     "vite": "^6.0.0",
     "vite-plugin-singlefile": "^2.0.0",
     "zxing-wasm": "^2.0.0"
+  },
+  "dependencies": {
+    "lzma-wasm": "^1.0.7"
   }
 }

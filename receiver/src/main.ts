@@ -179,6 +179,18 @@ function fmtDuration(s: number): string {
   return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
 }
 
+// 速率格式化：B/s → KB/s → MB/s
+function fmtRate(bps: number): string {
+  if (bps >= 1024 * 1024) return `${(bps / 1024 / 1024).toFixed(1)} MB/s`;
+  if (bps >= 1024) return `${(bps / 1024).toFixed(1)} KB/s`;
+  return `${Math.round(bps)} B/s`;
+}
+
+// 剩余时间（别名 fmtDuration，秒输入）
+function fmtDur(s: number): string {
+  return fmtDuration(s);
+}
+
 function showStreamHeader(h: ReturnType<typeof parseFrame> extends null ? never : Parameters<typeof streamIdentity>[0]) {
   $('progress-wrap').style.display = 'block';
   $('progress-stats').textContent = `接收中… 帧 ${framesGot}/${framesNeeded}`;
@@ -300,8 +312,23 @@ function updateProgress(dec: LTDecoder, got: number) {
   // 有效帧 = 新帧（去重后）；无效帧 = 重复帧（总收 = 有效+无效，无需单列）
   const valid = dec.framesNew;
   const invalid = dec.framesDup;
+  // 平均速率：有效帧 × 块长 / 耗时（块 = 每帧有效 payload；manifest 有 blockLen 才显示）
+  let rateTxt = '';
+  const blockLen = manifest?.blockLen ?? 0;
+  const elSec = (performance.now() - startTime) / 1000;
+  if (blockLen > 0 && elSec > 1 && valid > 0) {
+    const bytesPerSec = (valid * blockLen) / elSec;
+    const totalBytes = manifest?.transmittedSize ?? 0;
+    const doneBytes = valid * blockLen;
+    let remain = '';
+    if (totalBytes > doneBytes && bytesPerSec > 0) {
+      const remSec = (totalBytes - doneBytes) / bytesPerSec;
+      remain = ` · 剩余 ${fmtDur(remSec)}`;
+    }
+    rateTxt = ` · ${fmtRate(bytesPerSec)}${remain}`;
+  }
   $('progress-stats').textContent =
-    `块 ${dec.solvedCount}/${dec.k} (${pct.toFixed(0)}%) · 帧 ${valid}/期望~${framesNeeded} · 无效 ${invalid} · ${elapsed}s`;
+    `块 ${dec.solvedCount}/${dec.k} (${pct.toFixed(0)}%) · 帧 ${valid}/期望~${framesNeeded} · 无效 ${invalid} · ${elapsed}s${rateTxt}`;
   // 码率检测：总平均速度
   updateFpsHint(dec);
   // 帧时间线（丢帧诊断，非进度）

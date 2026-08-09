@@ -14,7 +14,11 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["node"]
+    "baseUrl": ".",
+    "types": ["node"],
+    "paths": {
+      "lzma-wasm": ["./shared/lzma-wasm.d.ts"]
+    }
   },
   "include": ["shared/**/*.ts", "receiver/src/**/*.ts", "sender-web/src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
 }

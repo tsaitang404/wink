@@ -12,11 +12,32 @@ import {
   fnv1a,
   safeFileName,
 } from './protocol';
+import * as lzmaWasm from 'lzma-wasm';
+
+// lzma-wasm：兼容 ESM/CJS interop（Node tsx 命名导出解析不同，统一 namespace 取）
+type LzmaModule = {
+  initWasm?: () => Promise<unknown>;
+  compress?: (d: Uint8Array, o?: { format?: 'xz'; level?: number }) => Uint8Array;
+  decompress?: (d: Uint8Array) => Uint8Array;
+};
+function lzmaMod(): LzmaModule {
+  const m = lzmaWasm as unknown as LzmaModule & { default?: LzmaModule };
+  return (m.initWasm ? m : m.default ?? m) as LzmaModule;
+}
+
+// lzma-wasm：懒初始化（wasm 加载一次）
+let lzmaReady: Promise<unknown> | null = null;
+async function lzmaInit(): Promise<void> {
+  if (!lzmaReady) {
+    lzmaReady = lzmaMod().initWasm?.() ?? Promise.resolve();
+  }
+  await lzmaReady;
+}
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-export type CompressionMode = 'none' | 'gzip';
+export type CompressionMode = 'none' | 'gzip' | 'brotli' | 'xz';
 
 export interface PackedFile {
   container: Uint8Array;
@@ -39,17 +60,39 @@ async function digest(bytes: Uint8Array<ArrayBufferLike>): Promise<Uint8Array<Ar
   );
 }
 
-async function gzipAsync(bytes: Uint8Array): Promise<Uint8Array> {
-  const compressed = new Blob([bytes as BlobPart])
-    .stream()
-    .pipeThrough(new CompressionStream('gzip'));
-  return new Uint8Array(await new Response(compressed).arrayBuffer());
+// xz 压缩/解压（lzma-wasm，浏览器 & Node 都可用）
+// 不可用时返回 null（packFile 降级不压缩；unpackFile 抛错）
+async function xzAsync(bytes: Uint8Array): Promise<Uint8Array | null> {
+  await lzmaInit();
+  const compress = lzmaMod().compress;
+  if (!compress) return null;
+  try {
+    return compress(bytes, { format: 'xz', level: 6 });
+  } catch {
+    return null;
+  }
 }
 
-async function gunzipAsync(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array> {
+async function unxzAsync(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array> {
+  await lzmaInit();
+  const decompress = lzmaMod().decompress;
+  if (!decompress) throw new Error('lzma-wasm unavailable');
+  const out = decompress(bytes);
+  if (out.length > maxBytes) {
+    throw new Error('The recovered file expands past its declared length.');
+  }
+  return out;
+}
+
+// 流式解压（gzip/brotli 旧格式兼容，浏览器 DecompressionStream）
+async function streamDecompress(
+  bytes: Uint8Array,
+  maxBytes: number,
+  format: CompressionFormat,
+): Promise<Uint8Array> {
   const inflated = new Blob([bytes as BlobPart])
     .stream()
-    .pipeThrough(new DecompressionStream('gzip'));
+    .pipeThrough(new DecompressionStream(format));
   const reader = inflated.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -113,21 +156,22 @@ export async function packFile(name: string, type: string, bytes: Uint8Array): P
     throw new Error('The file name or media type is too long.');
   }
 
-  const tryGzip = bytes.length >= 768 && !isPrecompressedType(type);
+  const tryCompress = bytes.length >= 768 && !isPrecompressedType(type);
   const [sha256, compressed] = await Promise.all([
     digest(bytes),
-    tryGzip ? gzipAsync(bytes) : Promise.resolve(undefined),
+    tryCompress ? xzAsync(bytes) : Promise.resolve(undefined),
   ]);
-  const useGzip = compressed !== undefined && compressed.length + 64 < bytes.length;
-  const transmitted = useGzip ? compressed : bytes;
-  const compression: CompressionMode = useGzip ? 'gzip' : 'none';
+  const useCompression =
+    compressed != null && compressed.length + 64 < bytes.length;
+  const transmitted = useCompression ? compressed : bytes;
+  const compression: CompressionMode = useCompression ? 'xz' : 'none';
 
   const out = new Uint8Array(
     FILE_HEADER_LEN + nameBytes.length + typeBytes.length + transmitted.length,
   );
   const view = new DataView(out.buffer);
   out.set(FILE_MAGIC, 0);
-  view.setUint8(4, useGzip ? 1 : 0);
+  view.setUint8(4, useCompression ? 3 : 0);
   view.setUint16(5, nameBytes.length, true);
   view.setUint16(7, typeBytes.length, true);
   view.setUint32(9, bytes.length, true);
@@ -146,8 +190,15 @@ export async function unpackFile(container: Uint8Array): Promise<UnpackedFile> {
   }
   const view = new DataView(container.buffer, container.byteOffset, container.byteLength);
   const compressionByte = view.getUint8(4);
-  if (compressionByte > 1) throw new Error('The recovered file uses unsupported compression.');
-  const compression: CompressionMode = compressionByte === 1 ? 'gzip' : 'none';
+  if (compressionByte > 3) throw new Error('The recovered file uses unsupported compression.');
+  const compression: CompressionMode =
+    compressionByte === 3
+      ? 'xz'
+      : compressionByte === 2
+        ? 'brotli'
+        : compressionByte === 1
+          ? 'gzip'
+          : 'none';
   const nameLength = view.getUint16(5, true);
   const typeLength = view.getUint16(7, true);
   const fileLength = view.getUint32(9, true);
@@ -163,18 +214,18 @@ export async function unpackFile(container: Uint8Array): Promise<UnpackedFile> {
     throw new Error('The recovered file length does not match its header.');
   }
   const transmitted = container.slice(dataOffset);
-  if (compression === 'gzip') {
-    if (transmitted.length < 18) throw new Error('The recovered gzip payload is incomplete.');
-    const trailer = new DataView(
-      transmitted.buffer,
-      transmitted.byteOffset + transmitted.byteLength - 4,
-      4,
+  let bytes: Uint8Array;
+  if (compression === 'xz') {
+    bytes = await unxzAsync(transmitted, fileLength);
+  } else if (compression === 'gzip' || compression === 'brotli') {
+    bytes = await streamDecompress(
+      transmitted,
+      fileLength,
+      compression === 'brotli' ? ('br' as CompressionFormat) : 'gzip',
     );
-    if (trailer.getUint32(0, true) !== fileLength) {
-      throw new Error('The gzip payload length does not match its file header.');
-    }
+  } else {
+    bytes = transmitted;
   }
-  const bytes = compression === 'gzip' ? await gunzipAsync(transmitted, fileLength) : transmitted;
   if (bytes.length !== fileLength) {
     throw new Error('The decompressed file length does not match its header.');
   }

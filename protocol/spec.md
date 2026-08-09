@@ -31,7 +31,7 @@ wink 光学文件传输协议：屏幕/终端对镜头 wink 传文件。
 | 偏移 | 大小 | 字段 |
 |---|---|---|
 | 0 | 4 | magic `"WNK1"` |
-| 4 | u8 | compression：0=none, 1=gzip |
+| 4 | u8 | compression：0=none, 1=gzip, 2=brotli, 3=xz |
 | 5 | u16 | nameLen（文件名 UTF-8） |
 | 7 | u16 | typeLen（MIME 类型） |
 | 9 | u32 | originalSize（解压后） |

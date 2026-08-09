@@ -7,7 +7,7 @@ license = "MIT"
 
 [dependencies]
 qrcode = "0.14"
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+xz2 = "0.1"
 libc = "0.2"
 sha2 = "0.10"
 
