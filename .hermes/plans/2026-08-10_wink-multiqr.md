@@ -1,7 +1,15 @@
-# wink v0.10.0 多码（Multi-QR）详细设计
+# wink v0.10.0 多码（Multi-QR）规划
 
-> 基线：v0.9.6（Latest）。目标：一屏 N 码，带宽 ×N。
-> 已确认：接收端 `readBarcodesFromImageData` 返回 results 数组并循环 handleBytes——多码识别零改动。
+> 版本基线：当前正式版 v0.9.6（Latest）。多码 = 新功能 + 协议 version bump → **v0.10.0**。
+> 若只做小修则 v0.9.7。用户确认按 v0.10.0 规划。
+
+## 状态：✅ 已实施完成（2026-08-10）
+
+- 协议：manifest v2 + layout（TS/Rust/golden 一致）
+- receiver：layout 显示（解码循环原生支持多码）
+- sender-web：布局下拉 + canvas 网格（实测 2x2 四码渲染 ✅）
+- sender-cli：--grid 参数 + ANSI 网格（实测 2x2/1x3 渲染 ✅）
+- 剩余：真实摄像头带宽实测（设备端验证，需真机）
 
 ---
 
