@@ -19,12 +19,11 @@ jobs:
             artifact: wink-linux-aarch64
     steps:
       - uses: actions/checkout@v4
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
       - name: Build with cross (musl toolchain in Docker)
-        uses: cross-rs/cross-action@main
-        with:
-          working-directory: sender-cli
-          target: ${{ matrix.target }}
-          args: --release
+        run: cross build --release --target ${{ matrix.target }}
+        working-directory: sender-cli
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
