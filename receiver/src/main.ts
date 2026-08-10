@@ -26,6 +26,7 @@ let framesNeeded = 0;
 let framesGot = 0;
 let startTime = 0;
 let miniMode = false;
+let multiZeroStreak = 0; // 多码连续 0 识别帧计数（后退提示）
 const receivedFiles: Array<{ name: string; type: string; bytes: Uint8Array; time: number }> = [];
 
 function fmtSize(n: number): string {
@@ -123,7 +124,18 @@ async function decodeLoop() {
         if (b.length > HEADER_LEN && b[0] === FRAME_MAGIC) return 'F';
         return '?';
       });
-      dbg.textContent = `每帧识别 ${results.length} 码 [${kinds.join('')}]` + (manifest ? ` · layout=${manifest.layout}` : '');
+      // 多码 0 识别提示：连续 10 帧一个码都没有 → 引导后退/对准
+      if (manifest && manifest.layout > 0 && results.length === 0) {
+        multiZeroStreak++;
+        if (multiZeroStreak >= 10) {
+          dbg.textContent = `⚠️ 每帧识别 0 码 —— 请后退让 ${LAYOUT_GRID[manifest.layout].rows}×${LAYOUT_GRID[manifest.layout].cols} 个码全部入镜，或调整对焦`;
+        } else {
+          dbg.textContent = `每帧识别 ${results.length} 码 [${kinds.join('')}]` + (manifest ? ` · layout=${manifest.layout}` : '');
+        }
+      } else {
+        multiZeroStreak = 0;
+        dbg.textContent = `每帧识别 ${results.length} 码 [${kinds.join('')}]` + (manifest ? ` · layout=${manifest.layout}` : '');
+      }
     }
     for (const r of results) {
       if (r.bytes.length > 0) handleBytes(r.bytes);
