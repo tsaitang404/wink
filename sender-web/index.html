@@ -24,8 +24,11 @@
       #canvas-wrap {
         background: #fff; border-radius: 12px; padding: 8px;
         max-width: 100%; margin: 8px 0;
+        aspect-ratio: 1 / 1; /* 保持正方形，防止 2x2 网格被压扁 */
+        display: flex; align-items: center; justify-content: center;
+        overflow: hidden;
       }
-      canvas { display: block; max-width: 100%; max-height: 60vh; margin: 0 auto; image-rendering: pixelated; }
+      canvas { display: block; max-width: 100%; max-height: 100%; margin: 0 auto; image-rendering: pixelated; }
       #params {
         width: 100%; max-width: 420px; background: #1d1d1d; border-radius: 12px;
         padding: 16px; margin: 12px 0; border: 1px solid #333;

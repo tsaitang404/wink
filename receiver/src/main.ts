@@ -97,10 +97,23 @@ async function decodeLoop() {
     const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
     ctx.drawImage(video, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const results = await readBarcodesFromImageData(imageData, {
+    let results = await readBarcodesFromImageData(imageData, {
       formats: ['QRCode'],
       tryHarder: true,
     });
+    // 多码提升：如果识别的码数 < 期望码数，按 layout 网格区域裁剪放大再解
+    // （真实摄像头拍摄的屏幕小码，放大后识别率显著提升）
+    if (manifest && manifest.layout > 0) {
+      const g = LAYOUT_GRID[manifest.layout];
+      const expectN = g.rows * g.cols;
+      if (results.length < expectN) {
+        const regionBytes = await decodeGridRegions(canvas, g, imageData.width, imageData.height);
+        // 区域结果直接处理（放大后更可靠）；与全图结果去重交给 handleBytes（seq 去重）
+        for (const bytes of regionBytes) {
+          if (bytes.length > 0) handleBytes(bytes);
+        }
+      }
+    }
     // 临时调试：显示每帧识别码数（多码诊断）
     const dbg = document.getElementById('debug-multi');
     if (dbg) {
@@ -119,6 +132,54 @@ async function decodeLoop() {
     // 解码失败/无码，忽略
   }
   requestAnimationFrame(decodeLoop);
+}
+
+/** 按 layout 网格裁剪视频画面为 N 个区域，每个区域放大 3 倍后解码 */
+async function decodeGridRegions(
+  canvas: HTMLCanvasElement,
+  g: { rows: number; cols: number },
+  vw: number,
+  vh: number,
+): Promise<Uint8Array[]> {
+  const out: Uint8Array[] = [];
+  const n = g.rows * g.cols;
+  // 网格占画面中心区域（QR 网格通常居中）—— 用画面 70% 中心
+  const gx0 = Math.floor(vw * 0.15);
+  const gy0 = Math.floor(vh * 0.15);
+  const gw = Math.floor(vw * 0.7);
+  const gh = Math.floor(vh * 0.7);
+  const cellW = Math.floor(gw / g.cols);
+  const cellH = Math.floor(gh / g.rows);
+  const scale = 3;
+  for (let p = 0; p < n; p++) {
+    const row = Math.floor(p / g.cols);
+    const col = p % g.cols;
+    const sx = gx0 + col * cellW;
+    const sy = gy0 + row * cellH;
+    // 区域带边距裁剪放大
+    const pad = 4;
+    const c2 = document.createElement('canvas');
+    c2.width = cellW * scale;
+    c2.height = cellH * scale;
+    const ctx2 = c2.getContext('2d', { willReadFrequently: true })!;
+    ctx2.imageSmoothingEnabled = false;
+    ctx2.drawImage(
+      canvas,
+      Math.max(0, sx - pad), Math.max(0, sy - pad),
+      Math.min(cellW + pad * 2, vw), Math.min(cellH + pad * 2, vh),
+      0, 0, c2.width, c2.height,
+    );
+    const d = ctx2.getImageData(0, 0, c2.width, c2.height);
+    try {
+      const res = await readBarcodesFromImageData(d, { formats: ['QRCode'], tryHarder: true });
+      for (const r of res) {
+        if (r.bytes.length > 0) out.push(r.bytes);
+      }
+    } catch {
+      // 单区域失败忽略
+    }
+  }
+  return out;
 }
 
 function handleBytes(bytes: Uint8Array) {

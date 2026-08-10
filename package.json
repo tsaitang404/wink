@@ -27,6 +27,7 @@
     "zxing-wasm": "^2.0.0"
   },
   "dependencies": {
+    "jsqr": "^1.4.0",
     "lzma-wasm": "^1.0.7"
   }
 }
