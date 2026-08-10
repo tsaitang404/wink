@@ -12,7 +12,7 @@ import {
   safeFileName,
 } from '../../shared/protocol.ts';
 import { unpackFile, unpackSnippet, verifyFile } from '../../shared/container.ts';
-import { parseManifest } from '../../shared/manifest.ts';
+import { parseManifest, LAYOUT_GRID } from '../../shared/manifest.ts';
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -171,6 +171,9 @@ function showManifest(m: NonNullable<ReturnType<typeof parseManifest>>) {
   $('mf-size').textContent = fmtSize(m.originalSize);
   $('mf-k').textContent = String(m.k);
   $('mf-fps').textContent = `${m.fps} fps`;
+  const g = LAYOUT_GRID[m.layout];
+  $('mf-layout').textContent =
+    m.layout === 0 ? '单码' : `${g.rows}×${g.cols}（${g.rows * g.cols} 码）`;
   $('mf-est').textContent = fmtDuration(m.estSeconds);
 }
 

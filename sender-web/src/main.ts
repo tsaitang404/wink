@@ -3,7 +3,7 @@ import * as QRCode from 'qrcode';
 import { LTEncoder } from '../../shared/fountain.ts';
 import { packFrame, fnv1a, HEADER_LEN } from '../../shared/protocol.ts';
 import { packFile, packSnippet } from '../../shared/container.ts';
-import { buildManifest, packManifest } from '../../shared/manifest.ts';
+import { buildManifest, packManifest, LAYOUT_GRID, type Layout } from '../../shared/manifest.ts';
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $('qr') as HTMLCanvasElement;
@@ -21,13 +21,14 @@ let fileBytes: Uint8Array | null = null;
 let fileName = '';
 let fileType = '';
 let container: Uint8Array | null = null;
-let containerGzip = false;
+let containerCompressed = false;
 let sessionId = 0;
 let encoder: LTEncoder | null = null;
 let streaming = false;
 let streamTimer: ReturnType<typeof setInterval> | null = null;
 let seq = 0;
 let snippetText = '';
+let layout: Layout = 0; // 多码布局（0=单码）
 
 function pickFile() {
   $('file-input').click();
@@ -69,7 +70,7 @@ async function loadPayload(name: string, type: string, bytes: Uint8Array, displa
     if (name !== '文本片段') {
       const packed = await packFile(name, type, bytes);
       container = packed.container;
-      containerGzip = packed.compression === 'gzip';
+      containerCompressed = packed.compression !== 'none';
     } else {
       container = bytes;
     }
@@ -82,7 +83,11 @@ async function loadPayload(name: string, type: string, bytes: Uint8Array, displa
 
 function currentParams() {
   const fps = Number(($('fps') as HTMLInputElement).value);
-  const qrVersion = Number(($('qr-size') as HTMLSelectElement).value);
+  let qrVersion = Number(($('qr-size') as HTMLSelectElement).value);
+  // 多码时版本上限：码越小，模块越密，接收端难扫
+  // 1x2/1x3 → 最多 v20；2x2/2x3 → 最多 v15（每码 400px 下保证 ~4px/模块）
+  const maxV = layout === 0 ? 40 : layout <= 2 ? 20 : 15;
+  if (qrVersion > maxV) qrVersion = maxV;
   const payloadCap = QR_CAPACITY[qrVersion]! - HEADER_LEN;
   // 块长自动优化：填满 QR 容量（pad 最少，QR 变化明显）。
   // JS 端 qrSegments 强制 byte mode 单段，容量精确，无需余量（与 Rust CLI 一致）
@@ -104,15 +109,46 @@ async function drawQr(bytes: Uint8Array, qrVersion?: number) {
   });
 }
 
+/** 多码网格渲染：layout 布局下画 N 个码（每码临时 canvas → blit 到网格位置） */
+async function drawGrid(frames: Array<{ bytes: Uint8Array; version?: number }>, lay: Layout) {
+  const g = LAYOUT_GRID[lay];
+  const n = g.rows * g.cols;
+  // 动态画布：单码 400，多码按网格放大（每码 400，加间隔）
+  const gap = 32; // 码间距（px）
+  const cw = 400;
+  canvas.width = g.cols * cw + (g.cols + 1) * gap;
+  canvas.height = g.rows * cw + (g.rows + 1) * gap;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // 每码独立临时 canvas（qrcode toCanvas 只接受 canvas 元素）
+  for (let p = 0; p < n; p++) {
+    const row = Math.floor(p / g.cols);
+    const col = p % g.cols;
+    const x = gap + col * (cw + gap);
+    const y = gap + row * (cw + gap);
+    const tmp = document.createElement('canvas');
+    tmp.width = cw;
+    tmp.height = cw;
+    // eslint-disable-next-line no-await-in-loop
+    await QRCode.toCanvas(tmp, qrSegments(frames[p]?.bytes ?? new Uint8Array(0)) as never, {
+      errorCorrectionLevel: 'L',
+      margin: 2,
+      width: cw,
+      version: frames[p]?.version,
+    });
+    ctx.drawImage(tmp, x, y, cw, cw);
+  }
+}
+
 function renderManifest() {
   if (!container || !fileBytes) return;
   const { fps, qrVersion, blockLen, payloadCap } = currentParams();
   const k = Math.max(1, Math.ceil(container.length / blockLen));
   const m = buildManifest({
     payloadType: fileName === '文本片段' ? 1 : 0,
-    compression: containerGzip ? 3 : 0, // 3=xz（发送端压缩标记）
+    compression: containerCompressed ? 3 : 0, // 3=xz（发送端压缩标记）
     codec: 0,
-    layout: 0, // 单码（多码 UI 在 v0.10 实现）
+    layout,
     name: fileName,
     originalSize: fileBytes.length,
     transmittedSize: container.length,
@@ -153,15 +189,34 @@ function startStream() {
   }, 1000 / fps);
 }
 
-/** 渲染指定 seq 的帧到二维码 + 更新进度条（暂停时跳帧用，立即显示目标帧） */
+/** 渲染指定画面：单码画 1 帧；多码画 N 帧（seq = 画面tick × N + 位置p） */
 function renderFrameAt(s: number) {
   if (!encoder || !container) return;
-  const block = encoder.encode(s);
-  const frame = packFrame(
-    { sessionId, seq: s, k: encoder.k, blockLen: currentParams().blockLen, totalLen: container.length, payloadFnv: fnv1a(container) },
-    block,
-  );
-  void drawQr(frame, currentParams().qrVersion);
+  const { blockLen, qrVersion } = currentParams();
+  const g = LAYOUT_GRID[layout];
+  const n = g.rows * g.cols;
+  if (layout === 0) {
+    const block = encoder.encode(s);
+    const frame = packFrame(
+      { sessionId, seq: s, k: encoder.k, blockLen, totalLen: container.length, payloadFnv: fnv1a(container) },
+      block,
+    );
+    void drawQr(frame, qrVersion);
+  } else {
+    // 多码：画面 tick = floor(s / n)，N 帧 seq 连续
+    const tick = Math.floor(s / n);
+    const frames: Array<{ bytes: Uint8Array; version?: number }> = [];
+    for (let p = 0; p < n; p++) {
+      const frameSeq = tick * n + p;
+      const block = encoder.encode(frameSeq);
+      const frame = packFrame(
+        { sessionId, seq: frameSeq, k: encoder.k, blockLen, totalLen: container.length, payloadFnv: fnv1a(container) },
+        block,
+      );
+      frames.push({ bytes: frame, version: qrVersion });
+    }
+    void drawGrid(frames, layout);
+  }
   updateSeqSlider(s);
 }
 
@@ -304,6 +359,15 @@ for (const id of ['fps', 'qr-size']) {
     if (container && !streaming) renderManifest();
   });
 }
+
+// 多码布局变化：更新状态 + 重渲染 manifest（未开始传输时）
+$('qr-layout').addEventListener('change', (e) => {
+  layout = Number((e.target as HTMLSelectElement).value) as Layout;
+  // 重设 canvas 为单码尺寸（renderManifest 会重画 manifest 单码）
+  canvas.width = 400;
+  canvas.height = 400;
+  if (container && !streaming) renderManifest();
+});
 
 // 点击二维码 = 暂停/继续（留对焦时间）
 canvas.addEventListener('click', () => {
