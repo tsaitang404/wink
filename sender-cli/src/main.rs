@@ -126,6 +126,7 @@ fn main() {
         frame_version,
         if container_compressed { 3 } else { 0 },
         data.len() as u32,
+        0, // layout：0=1x1 单码（多码在 v0.10 由 --grid 参数驱动）
     );
     let (manifest_ansi, _manifest_version) = qr::render_ansi(&manifest, 2, None);
 
@@ -303,15 +304,17 @@ fn build_manifest_bytes(
     qr_version: u32,
     compression: u8,
     original_size: u32,
+    layout: u8,
 ) -> Vec<u8> {
     let k = container.len().div_ceil(block_len).max(1);
     let est = (k as u64 * 115 / 100).div_ceil(u64::from(fps)) as u32;
-    let mut out = Vec::with_capacity(36 + name.len());
+    let mut out = Vec::with_capacity(37 + name.len());
     out.extend_from_slice(&[0x57, 0x4e, 0x4b, 0x4d]); // WNKM
-    out.push(1); // version
+    out.push(2); // version
     out.push(0); // payloadType file
     out.push(compression); // compression（与容器一致，0=none 3=xz）
     out.push(0); // codec 黑白
+    out.push(layout); // layout：0=1x1 1=1x2 2=1x3 3=2x2 4=2x3
     out.extend_from_slice(&(name.len() as u16).to_le_bytes());
     out.extend_from_slice(&original_size.to_le_bytes()); // originalSize（原始文件大小）
     out.extend_from_slice(&(container.len() as u32).to_le_bytes()); // transmittedSize（传输大小）

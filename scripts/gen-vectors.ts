@@ -67,12 +67,13 @@ function hex64(f: number): string {
   console.log('container-sample.bin:', packed.container.length, 'bytes, compression:', packed.compression);
 }
 
-// 5. manifest-sample.bin: 固定 manifest
+// 5. manifest-sample.bin: 固定 manifest（v2，layout=3 2x2 验证多码布局字段）
 {
   const m = buildManifest({
     payloadType: 0,
     compression: 0,
     codec: 0,
+    layout: 3, // 2x2
     name: 'golden.txt',
     originalSize: 1234,
     transmittedSize: 1234,
@@ -84,6 +85,26 @@ function hex64(f: number): string {
   });
   writeFileSync(join(outDir, 'manifest-sample.bin'), packManifest(m));
   console.log('manifest-sample.bin:', packManifest(m).length, 'bytes');
+}
+
+// 5b. manifest-layout0.bin: 单码 layout（回归验证 v1→v2 最小差异）
+{
+  const m = buildManifest({
+    payloadType: 0,
+    compression: 0,
+    codec: 0,
+    layout: 0, // 1x1 单码
+    name: 'a.bin',
+    originalSize: 500,
+    transmittedSize: 500,
+    blockLen: 64,
+    sessionId: 3,
+    qrVersion: 20,
+    fps: 30,
+    payloadFnv: 0,
+  });
+  writeFileSync(join(outDir, 'manifest-layout0.bin'), packManifest(m));
+  console.log('manifest-layout0.bin:', packManifest(m).length, 'bytes');
 }
 
 // 6. splitmix32-seq.bin: splitmix32(1234) 前 64 个 u32 值（小端）

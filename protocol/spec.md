@@ -56,23 +56,25 @@ wink 光学文件传输协议：屏幕/终端对镜头 wink 传文件。
 | 偏移 | 大小 | 字段 |
 |---|---|---|
 | 0 | 4 | magic `"WNKM"` |
-| 4 | u8 | version = 1 |
+| 4 | u8 | version = 2 |
 | 5 | u8 | payloadType：0=文件 1=文本 |
 | 6 | u8 | compression |
 | 7 | u8 | codec：0=黑白 1=四色 2=八色 |
-| 8 | u16 | nameLen |
-| 10 | u32 | originalSize |
-| 14 | u32 | transmittedSize |
-| 18 | u16 | k |
-| 20 | u16 | blockLen |
-| 22 | u16 | sessionId |
-| 24 | u16 | qrVersion（建议） |
-| 26 | u16 | fps（建议） |
-| 28 | u32 | estSeconds = ceil(1.15*k/fps) |
-| 32 | 4 | payloadFnv（预校验） |
-| 36 | nameLen | 文件名 |
+| 8 | u8 | layout：0=1x1 1=1x2 2=1x3 3=2x2 4=2x3 |
+| 9 | u16 | nameLen |
+| 11 | u32 | originalSize |
+| 15 | u32 | transmittedSize |
+| 19 | u16 | k |
+| 21 | u16 | blockLen |
+| 23 | u16 | sessionId |
+| 25 | u16 | qrVersion（建议） |
+| 27 | u16 | fps（建议） |
+| 29 | u32 | estSeconds = ceil(1.15*k/fps) |
+| 33 | 4 | payloadFnv（预校验） |
+| 37 | nameLen | 文件名 |
 
 元信息帧永远黑白 QR（最可靠），codec 字段声明帧流编码。
+多码：layout 声明网格布局，每帧码独立（seq = 画面tick × N + 位置p），接收端逐码解码。v1（36 字节头，无 layout）不再解析，接收端提示更新。
 
 ## 5. 喷泉码参数
 

@@ -110,8 +110,9 @@ function renderManifest() {
   const k = Math.max(1, Math.ceil(container.length / blockLen));
   const m = buildManifest({
     payloadType: fileName === '文本片段' ? 1 : 0,
-    compression: containerGzip ? 1 : 0,
+    compression: containerGzip ? 3 : 0, // 3=xz（发送端压缩标记）
     codec: 0,
+    layout: 0, // 单码（多码 UI 在 v0.10 实现）
     name: fileName,
     originalSize: fileBytes.length,
     transmittedSize: container.length,

@@ -83,12 +83,13 @@ test('isPrecompressedType detects known formats', () => {
   assert.equal(isPrecompressedType('application/pdf'), false); // pdf 不预判
 });
 
-// T11: manifest pack/parse 往返
+// T11: manifest pack/parse 往返（v2 + layout）
 test('manifest pack/parse roundtrip', () => {
   const m = buildManifest({
     payloadType: 0,
     compression: 0,
     codec: 0,
+    layout: 3, // 2x2
     name: 'hello.txt',
     originalSize: 1000,
     transmittedSize: 1000,
@@ -101,8 +102,51 @@ test('manifest pack/parse roundtrip', () => {
   const bytes = packManifest(m);
   const parsed = parseManifest(bytes)!;
   assert.deepEqual(parsed, m);
+  assert.equal(parsed.version, 2);
+  assert.equal(parsed.layout, 3);
   assert.equal(parsed.k, 8); // ceil(1000/128) = 8
   assert.equal(parsed.estSeconds, Math.ceil((8 * 1.15) / 30));
+});
+
+// T11c: manifest v1 旧帧被拒绝（接收端提示更新）
+test('parseManifest rejects v1 legacy', () => {
+  // 构造 v1 布局字节：version=1
+  const m = buildManifest({
+    payloadType: 0,
+    compression: 0,
+    codec: 0,
+    layout: 0,
+    name: 'a.bin',
+    originalSize: 10,
+    transmittedSize: 10,
+    blockLen: 10,
+    sessionId: 1,
+    qrVersion: 1,
+    fps: 1,
+  });
+  const bytes = packManifest(m);
+  bytes[4] = 1; // 改成 version=1（长度仍是 v2 的 37+name，parse 会因 version≠2 拒绝）
+  assert.equal(parseManifest(bytes), null);
+});
+
+// T11d: 非法 layout 被拒绝
+test('parseManifest rejects bad layout', () => {
+  const m = buildManifest({
+    payloadType: 0,
+    compression: 0,
+    codec: 0,
+    layout: 0,
+    name: 'a.bin',
+    originalSize: 10,
+    transmittedSize: 10,
+    blockLen: 10,
+    sessionId: 1,
+    qrVersion: 1,
+    fps: 1,
+  });
+  const bytes = packManifest(m);
+  bytes[8] = 9; // 非法 layout
+  assert.equal(parseManifest(bytes), null);
 });
 
 // T11b: manifest 拒绝坏帧

@@ -87,26 +87,53 @@ fn golden_splitmix32_matches() {
 
 #[test]
 fn golden_manifest_matches() {
-    // 由 TS 生成固定 manifest（session 7, golden.txt, k=ceil(1234/128)=10）
+    // 由 TS 生成固定 manifest（v2, session 7, golden.txt, layout=3 2x2, k=ceil(1234/128)=10）
     let expected = read("manifest-sample.bin");
     // 手工重建与 TS buildManifest 相同的字节
     let name = b"golden.txt";
-    let mut out = vec![0u8; 36 + name.len()];
+    let mut out = vec![0u8; 37 + name.len()];
     out[0..4].copy_from_slice(&[0x57, 0x4e, 0x4b, 0x4d]); // WNKM
-    out[4] = 1; // version
+    out[4] = 2; // version
     out[5] = 0; // payloadType file
     out[6] = 0; // compression none
     out[7] = 0; // codec 黑白
-    out[8..10].copy_from_slice(&(name.len() as u16).to_le_bytes());
-    out[10..14].copy_from_slice(&1234u32.to_le_bytes()); // originalSize
-    out[14..18].copy_from_slice(&1234u32.to_le_bytes()); // transmittedSize
-    out[18..20].copy_from_slice(&10u16.to_le_bytes()); // k = ceil(1234/128) = 10
-    out[20..22].copy_from_slice(&128u16.to_le_bytes()); // blockLen
-    out[22..24].copy_from_slice(&7u16.to_le_bytes()); // sessionId
-    out[24..26].copy_from_slice(&15u16.to_le_bytes()); // qrVersion
-    out[26..28].copy_from_slice(&30u16.to_le_bytes()); // fps
-    out[28..32].copy_from_slice(&1u32.to_le_bytes()); // estSeconds = ceil(10*1.15/30) = ceil(0.383) = 1
-    out[32..36].copy_from_slice(&0x1234_5678u32.to_le_bytes()); // payloadFnv
-    out[36..].copy_from_slice(name);
+    out[8] = 3; // layout 2x2
+    out[9..11].copy_from_slice(&(name.len() as u16).to_le_bytes());
+    out[11..15].copy_from_slice(&1234u32.to_le_bytes()); // originalSize
+    out[15..19].copy_from_slice(&1234u32.to_le_bytes()); // transmittedSize
+    out[19..21].copy_from_slice(&10u16.to_le_bytes()); // k = ceil(1234/128) = 10
+    out[21..23].copy_from_slice(&128u16.to_le_bytes()); // blockLen
+    out[23..25].copy_from_slice(&7u16.to_le_bytes()); // sessionId
+    out[25..27].copy_from_slice(&15u16.to_le_bytes()); // qrVersion
+    out[27..29].copy_from_slice(&30u16.to_le_bytes()); // fps
+    out[29..33].copy_from_slice(&1u32.to_le_bytes()); // estSeconds = ceil(10*1.15/30) = ceil(0.383) = 1
+    out[33..37].copy_from_slice(&0x1234_5678u32.to_le_bytes()); // payloadFnv
+    out[37..].copy_from_slice(name);
     assert_eq!(out, expected, "manifest bytes differ");
+}
+
+#[test]
+fn golden_manifest_layout0_matches() {
+    // layout=0（单码）回归：v2 最小布局
+    let expected = read("manifest-layout0.bin");
+    let name = b"a.bin";
+    let mut out = vec![0u8; 37 + name.len()];
+    out[0..4].copy_from_slice(&[0x57, 0x4e, 0x4b, 0x4d]); // WNKM
+    out[4] = 2; // version
+    out[5] = 0; // payloadType file
+    out[6] = 0; // compression none
+    out[7] = 0; // codec 黑白
+    out[8] = 0; // layout 1x1
+    out[9..11].copy_from_slice(&(name.len() as u16).to_le_bytes());
+    out[11..15].copy_from_slice(&500u32.to_le_bytes()); // originalSize
+    out[15..19].copy_from_slice(&500u32.to_le_bytes()); // transmittedSize
+    out[19..21].copy_from_slice(&8u16.to_le_bytes()); // k = ceil(500/64) = 8
+    out[21..23].copy_from_slice(&64u16.to_le_bytes()); // blockLen
+    out[23..25].copy_from_slice(&3u16.to_le_bytes()); // sessionId
+    out[25..27].copy_from_slice(&20u16.to_le_bytes()); // qrVersion
+    out[27..29].copy_from_slice(&30u16.to_le_bytes()); // fps
+    out[29..33].copy_from_slice(&1u32.to_le_bytes()); // estSeconds = ceil(8*1.15/30) = 1
+    out[33..37].copy_from_slice(&0u32.to_le_bytes()); // payloadFnv
+    out[37..].copy_from_slice(name);
+    assert_eq!(out, expected, "manifest layout0 bytes differ");
 }
