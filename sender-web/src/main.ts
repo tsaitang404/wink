@@ -82,12 +82,15 @@ async function loadPayload(name: string, type: string, bytes: Uint8Array, displa
 }
 
 function currentParams() {
-  const fps = Number(($('fps') as HTMLInputElement).value);
+  let fps = Number(($('fps') as HTMLInputElement).value);
   let qrVersion = Number(($('qr-size') as HTMLSelectElement).value);
   // 多码时版本上限：码越小，模块越密，接收端难扫
   // 1x2/1x3 → 最多 v20；2x2/2x3 → 最多 v15（每码 400px 下保证 ~4px/模块）
   const maxV = layout === 0 ? 40 : layout <= 2 ? 20 : 15;
   if (qrVersion > maxV) qrVersion = maxV;
+  // 多码时 fps 上限：屏幕刷新越快，摄像头滚动快门撕裂越严重（画面上下两帧混合）
+  // 单码 30fps 可接受；多码码小，撕裂直接导致无法识别 → 强制 ≤15fps
+  if (layout !== 0 && fps > 15) fps = 15;
   const payloadCap = QR_CAPACITY[qrVersion]! - HEADER_LEN;
   // 块长自动优化：填满 QR 容量（pad 最少，QR 变化明显）。
   // JS 端 qrSegments 强制 byte mode 单段，容量精确，无需余量（与 Rust CLI 一致）
@@ -366,6 +369,8 @@ $('qr-layout').addEventListener('change', (e) => {
   // 重设 canvas 为单码尺寸（renderManifest 会重画 manifest 单码）
   canvas.width = 400;
   canvas.height = 400;
+  // fps 标签同步多码限速
+  $('fps-label').textContent = currentParams().fps.toString();
   if (container && !streaming) renderManifest();
 });
 

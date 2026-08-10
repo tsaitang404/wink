@@ -50,7 +50,7 @@ fn main() {
     }
     // 用法：wink <file> [--fps 30] [--block N]  （无 send 子命令）
     let path = &args[1];
-    let fps: u32 = parse_arg(&args, "--fps", 30);
+    let mut fps: u32 = parse_arg(&args, "--fps", 30);
     // QR 版本：-v<N>（如 -v15 / -v20 / -v40），不传则自动
     let qr_version: Option<u32> = args
         .iter()
@@ -82,6 +82,11 @@ fn main() {
             grid.1,
             grid.0 * grid.1
         );
+        // 多码时 fps 上限 15：屏幕刷新太快 → 摄像头滚动快门撕裂 → 识别失败
+        if fps > 15 {
+            eprintln!("⚠️ 多码限 15fps（原 {fps}）——屏幕刷新过快摄像头会拍出撕裂条纹");
+            fps = 15;
+        }
     }
 
     // 1. 读文件
