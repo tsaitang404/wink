@@ -29,6 +29,9 @@ use protocol::{fnv1a, pack_frame, FrameHeader};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// 多码布局表：layout 值 → `(行, 列)`。与 TS `LAYOUT_GRID` 一致
+const LAYOUT_GRID: [(usize, usize); 5] = [(1, 1), (1, 2), (1, 3), (2, 2), (2, 3)];
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     // --version / -V：显示版本并正常退出
@@ -58,6 +61,28 @@ fn main() {
         .position(|a| a == "--block")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok());
+    // 多码布局：--grid 1x2 | 1x3 | 2x2 | 2x3（不传 = 单码）
+    let layout: u8 = args
+        .iter()
+        .position(|a| a == "--grid")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| match v.to_lowercase().as_str() {
+            "1x2" => Some(1),
+            "1x3" => Some(2),
+            "2x2" => Some(3),
+            "2x3" => Some(4),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let grid = LAYOUT_GRID[layout as usize];
+    if layout > 0 {
+        eprintln!(
+            "🖼 多码布局 {}×{}（{} 码/画面）",
+            grid.0,
+            grid.1,
+            grid.0 * grid.1
+        );
+    }
 
     // 1. 读文件
     let data = match std::fs::read(path) {
@@ -99,12 +124,24 @@ fn main() {
         % 0xffff) as u16;
 
     // 4. 帧流 QR 版本：-v 指定，否则按终端宽度选最大可容纳版本
+    //    多码时每码宽度受限（列数 ÷ 布局列数），版本自动降
     let frame_version = qr_version.unwrap_or_else(|| {
         let cols = terminal_cols().unwrap_or(80);
+        // 每码可用列 = 总列 ÷ 布局列数（1x2 → 半宽）
+        let per_code_cols = (cols as usize) / grid.1.max(1);
         // 可用模块宽 = 列数 × 2（半块字符），减安静区；换算版本 vN = (模块数-17)/4
-        let max_modules = ((cols as usize) * 2).saturating_sub(8).clamp(21, 177);
+        let max_modules = ((per_code_cols) * 2).saturating_sub(8).clamp(21, 177);
         ((max_modules - 17) / 4).clamp(1, 40) as u32
     });
+    // 多码时版本上限（与 web 一致）：1x2/1x3 → v20，2x2/2x3 → v15
+    let layout_cap = if layout == 0 {
+        40
+    } else if layout <= 2 {
+        20
+    } else {
+        15
+    };
+    let frame_version = frame_version.min(layout_cap);
 
     // 5. 块长：不传则自动优化 —— 尽量填满所选 QR 版本容量（pad 最少，QR 变化明显）
     //    关键：LT 的 degree 不影响帧大小（一帧始终 block_len 字节，XOR 任意个块长度不变），
@@ -126,7 +163,7 @@ fn main() {
         frame_version,
         if container_compressed { 3 } else { 0 },
         data.len() as u32,
-        0, // layout：0=1x1 单码（多码在 v0.10 由 --grid 参数驱动）
+        layout, // 多码布局（0=单码）
     );
     let (manifest_ansi, _manifest_version) = qr::render_ansi(&manifest, 2, None);
 
@@ -188,6 +225,7 @@ fn main() {
             payload_fnv,
             fps,
             qr_version,
+            layout,
             start,
         };
 
@@ -233,6 +271,7 @@ fn print_usage() {
          \x20 --fps 1-60   帧率（默认 30）\n\
          \x20 --block N    块长字节（默认按二维码容量自动优化）\n\
          \x20 -v<N>        二维码版本 1-40（如 -v15 / -v20 / -v40，默认自动选最大可容纳）\n\
+         \x20 --grid       多码布局：1x2 1x3 2x2 2x3（默认单码；多码带宽更高）\n\
          \x20 --version    显示版本号\n\
          \n\
          播放中:\n\
@@ -457,22 +496,48 @@ struct CmdCtx<'a> {
     payload_fnv: u32,
     fps: u32,
     qr_version: Option<u32>,
+    layout: u8, // 多码布局：0=单码 1=1x2 2=1x3 3=2x2 4=2x3
     start: std::time::Instant,
 }
 
-/// 渲染指定帧到备用屏（光标归位覆盖，不滚动）+ 底部输入回显行
+/// 渲染指定画面到备用屏（光标归位覆盖，不滚动）+ 底部输入回显行
+/// 单码：1 帧（seq）；多码：画面 tick = seq / N，N 帧 seq = tick*N + p
 fn render_frame(ctx: &CmdCtx, seq: u32) {
-    let block = ctx.enc.encode(seq);
-    let header = FrameHeader {
-        session_id: ctx.session_id,
-        seq,
-        k: ctx.enc.k as u16,
-        block_len: ctx.block_len as u16,
-        total_len: ctx.total_len,
-        payload_fnv: ctx.payload_fnv,
+    let (rows, cols) = LAYOUT_GRID[ctx.layout as usize];
+    let n = rows * cols;
+    let ansi = if n == 1 {
+        let block = ctx.enc.encode(seq);
+        let header = FrameHeader {
+            session_id: ctx.session_id,
+            seq,
+            k: ctx.enc.k as u16,
+            block_len: ctx.block_len as u16,
+            total_len: ctx.total_len,
+            payload_fnv: ctx.payload_fnv,
+        };
+        let frame = pack_frame(&header, &block);
+        let (s, _v) = qr::render_ansi(&frame, 2, ctx.qr_version);
+        s
+    } else {
+        let tick = seq / n as u32;
+        let mut frames: Vec<Vec<u8>> = Vec::with_capacity(n);
+        for p in 0..n {
+            let frame_seq = tick * n as u32 + p as u32;
+            let block = ctx.enc.encode(frame_seq);
+            let header = FrameHeader {
+                session_id: ctx.session_id,
+                seq: frame_seq,
+                k: ctx.enc.k as u16,
+                block_len: ctx.block_len as u16,
+                total_len: ctx.total_len,
+                payload_fnv: ctx.payload_fnv,
+            };
+            frames.push(pack_frame(&header, &block));
+        }
+        let payloads: Vec<&[u8]> = frames.iter().map(Vec::as_slice).collect();
+        let (s, _v) = qr::render_grid_ansi(&payloads, 2, ctx.qr_version, cols, rows);
+        s
     };
-    let frame = pack_frame(&header, &block);
-    let (ansi, _v) = qr::render_ansi(&frame, 2, ctx.qr_version);
     print!("\x1b[H{ansi}");
     print_status(seq, ctx.enc.k, ctx.fps, ctx.start.elapsed());
     // 输入回显：状态行下一行显示 `wink> <当前输入>`（打字可见）
