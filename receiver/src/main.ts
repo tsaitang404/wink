@@ -175,8 +175,10 @@ function showManifest(m: NonNullable<ReturnType<typeof parseManifest>>) {
 }
 
 function fmtDuration(s: number): string {
-  if (s < 60) return `${s} 秒`;
-  return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+  const sec = Math.max(0, Math.round(s));
+  if (sec < 60) return `${sec} 秒`;
+  if (sec < 3600) return `${Math.floor(sec / 60)} 分 ${sec % 60} 秒`;
+  return `${Math.floor(sec / 3600)} 时 ${Math.floor((sec % 3600) / 60)} 分`;
 }
 
 // 速率格式化：B/s → KB/s → MB/s
