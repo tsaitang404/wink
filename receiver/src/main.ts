@@ -101,6 +101,17 @@ async function decodeLoop() {
       formats: ['QRCode'],
       tryHarder: true,
     });
+    // 临时调试：显示每帧识别码数（多码诊断）
+    const dbg = document.getElementById('debug-multi');
+    if (dbg) {
+      const kinds = results.map((r) => {
+        const b = r.bytes;
+        if (b.length >= 4 && b[0] === MANIFEST_MAGIC[0] && b[1] === MANIFEST_MAGIC[1]) return 'M';
+        if (b.length > HEADER_LEN && b[0] === FRAME_MAGIC) return 'F';
+        return '?';
+      });
+      dbg.textContent = `每帧识别 ${results.length} 码 [${kinds.join('')}]` + (manifest ? ` · layout=${manifest.layout}` : '');
+    }
     for (const r of results) {
       if (r.bytes.length > 0) handleBytes(r.bytes);
     }
