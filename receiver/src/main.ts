@@ -24,6 +24,7 @@ let video: HTMLVideoElement = document.createElement('video');
 let stream: MediaStream | null = null;
 let decoding = false;
 let manifest: ReturnType<typeof parseManifest> | null = null;
+let decodeWidth = 0; // 按 QR 版本自适应的解码分辨率
 let decoder: LTDecoder | null = null;
 let currentIdentity = '';
 let framesNeeded = 0;
@@ -70,6 +71,7 @@ async function startCamera() {
     $('start-btn').style.display = 'none';
     setStatus('等待 wink… 对准发送端的二维码');
     decoding = true;
+    decodeWidth = 0; // 重置，等 manifest 设置
     requestAnimationFrame(decodeLoop);
   } catch (e) {
     setStatus(`❌ 摄像头失败: ${(e as Error).message}`);
@@ -96,8 +98,8 @@ async function decodeLoop() {
   }
   try {
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = decodeWidth > 0 ? decodeWidth : video.videoWidth;
+    canvas.height = decodeWidth > 0 ? Math.round(decodeWidth * video.videoHeight / video.videoWidth) : video.videoHeight;
     const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
     ctx.drawImage(video, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -120,6 +122,8 @@ function handleBytes(bytes: Uint8Array) {
     const m = parseManifest(bytes);
     if (m) {
       manifest = m;
+      // 自适应解码分辨率：v15/v20→200px, v27→256px, v40→0(原始)
+      decodeWidth = m.qrVersion <= 20 ? 200 : m.qrVersion <= 27 ? 256 : 0;
       currentIdentity = '';
       showManifest(m);
       // 预建解码器（帧流开始后直接喂）
