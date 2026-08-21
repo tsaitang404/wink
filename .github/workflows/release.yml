@@ -68,8 +68,8 @@ jobs:
           mv ./wink-arm.bin ./wink-linux-aarch64
           chmod +x wink-linux-*
           # Web 单 HTML
-          mv wink-web/sender-web/index.html ./wink-sender.html
-          mv wink-web/receiver/index.html ./wink-receiver.html
+          mv wink-web/sender-web/dist/index.html ./wink-sender.html
+          mv wink-web/receiver/dist/index.html ./wink-receiver.html
           rm -rf wink-web
           echo "=== release artifacts ==="
           ls -la
