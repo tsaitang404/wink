@@ -40,11 +40,14 @@ jobs:
           node-version: 22
       - run: npm ci || npm install
       - run: npx vite build --config sender-web/vite.config.ts
-      - name: Upload web artifact
+      - run: npx vite build --config receiver/vite.config.ts
+      - name: Upload web artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wink-sender-html
-          path: sender-web/dist/index.html
+          name: wink-web
+          path: |
+            sender-web/dist/index.html
+            receiver/dist/index.html
           if-no-files-found: error
 
   release:
@@ -57,16 +60,17 @@ jobs:
       - name: Assemble final artifacts
         run: |
           cd dist/bin
-          # 下载结构: dist/bin/<artifact-name>/wink
-          # 先移走二进制到临时名，再删目录，最后重命名
+          # 二进制
           mv wink-linux-x86_64/wink ./wink-x86.bin
           mv wink-linux-aarch64/wink ./wink-arm.bin
-          mv wink-sender-html/index.html ./wink-web.html
-          rm -rf wink-linux-x86_64 wink-linux-aarch64 wink-sender-html
+          rm -rf wink-linux-x86_64 wink-linux-aarch64
           mv ./wink-x86.bin ./wink-linux-x86_64
           mv ./wink-arm.bin ./wink-linux-aarch64
-          mv ./wink-web.html ./wink-sender.html
           chmod +x wink-linux-*
+          # Web 单 HTML
+          mv wink-web/sender-web/index.html ./wink-sender.html
+          mv wink-web/receiver/index.html ./wink-receiver.html
+          rm -rf wink-web
           echo "=== release artifacts ==="
           ls -la
           file wink-linux-* | grep -o 'statically linked\|static-pie'
