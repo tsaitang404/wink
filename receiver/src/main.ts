@@ -91,6 +91,26 @@ function leaveHiddenMode() {
   $('video-wrap').classList.remove('hidden');
 }
 
+/** BarcodeDetector 优先，zxing 兜底 */
+async function decodeFrame(imageData: ImageData): Promise<{ bytes: Uint8Array }[]> {
+  if ('BarcodeDetector' in window) {
+    try {
+      const detector = new BarcodeDetector({ formats: ['qr_code'] });
+      const detected = await detector.detect(imageData);
+      if (detected.length > 0) {
+        return detected.map((d: DetectedBarcode) => ({ bytes: new Uint8Array(d.rawValue as unknown as ArrayBuffer) }));
+      }
+    } catch {
+      // BarcodeDetector 失败，fallback zxing
+    }
+  }
+  const results = await readBarcodesFromImageData(imageData, {
+    formats: ['QRCode'],
+    tryHarder: true,
+  });
+  return results.filter(r => r.bytes.length > 0).map(r => ({ bytes: r.bytes }));
+}
+
 async function decodeLoop() {
   if (!decoding || video.readyState < 2) {
     requestAnimationFrame(decodeLoop);
@@ -103,12 +123,9 @@ async function decodeLoop() {
     const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
     ctx.drawImage(video, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const results = await readBarcodesFromImageData(imageData, {
-      formats: ['QRCode'],
-      tryHarder: true,
-    });
+    const results = await decodeFrame(imageData);
     for (const r of results) {
-      if (r.bytes.length > 0) handleBytes(r.bytes);
+      handleBytes(r.bytes);
     }
   } catch {
     // 解码失败/无码，忽略
