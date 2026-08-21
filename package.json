@@ -1,6 +1,6 @@
 {
   "name": "wink",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "眨眼式光学文件传输：屏幕/终端对摄像头眨眼传文件，无网络",
