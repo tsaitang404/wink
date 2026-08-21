@@ -104,7 +104,7 @@ pub fn frame_indices(k: usize, cdf: &[f64], session_id: u16, seq: u32) -> Vec<us
     let mut lo = 0usize;
     let mut hi = k - 1;
     while lo < hi {
-        let mid = (lo + hi) >> 1;
+        let mid = usize::midpoint(lo, hi);
         if cdf[mid] >= u {
             hi = mid;
         } else {
