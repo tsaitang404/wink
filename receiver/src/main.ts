@@ -367,6 +367,11 @@ function updateFpsHint(dec: LTDecoder) {
 async function onComplete(container: Uint8Array) {
   decoding = false;
   try {
+    // 文本容器：直接走 onTextComplete
+    if (container.length >= 4 && container[0] === TEXT_MAGIC[0] && container[1] === TEXT_MAGIC[1]) {
+      onTextComplete(container);
+      return;
+    }
     const file = await unpackFile(container);
     const ok = await verifyFile(file);
     if (!ok) {
