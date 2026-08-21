@@ -1,4 +1,4 @@
-// wink 发送端（单 HTML）：选文件 → 元信息 QR → 参数可调 → 帧流
+// wink 发送端（单 HTML）：选文件 → 接收端地址 QR → 参数可调 → 帧流
 import * as QRCode from 'qrcode';
 import { LTEncoder } from '../../shared/fountain.ts';
 import { packFrame, fnv1a, HEADER_LEN } from '../../shared/protocol.ts';
@@ -8,6 +8,9 @@ import { buildManifest, packManifest } from '../../shared/manifest.ts';
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $('qr') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
+
+// 接收端地址（固定 Pages 地址）
+const RECEIVER_URL = 'https://tsaitang404.github.io/wink/';
 
 // QR 版本 → payload 容量（byte mode, ECC L，标准 v1-v40）
 const QR_CAPACITY: Record<number, number> = {
@@ -29,6 +32,8 @@ let streamTimer: ReturnType<typeof setInterval> | null = null;
 let seq = 0;
 let snippetText = '';
 
+// ── 文件选择 ──
+
 function pickFile() {
   const input = $('file-input') as HTMLInputElement;
   input.value = '';
@@ -44,6 +49,8 @@ $('file-input').addEventListener('change', async (e) => {
   await loadPayload(file.name, file.type || 'application/octet-stream', bytes);
 });
 
+// ── 粘贴文本 ──
+
 $('paste-btn').addEventListener('click', async () => {
   const text = prompt('粘贴要发送的文本（≤ 4MB）：');
   if (text == null) return;
@@ -52,6 +59,54 @@ $('paste-btn').addEventListener('click', async () => {
   const snip = packSnippet(text);
   await loadPayload('文本片段', 'text/plain', snip, bytes.length);
 });
+
+// ── 拖拽文件 (#7) ──
+
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  $('status').textContent = '📥 松手释放文件';
+});
+
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const file = e.dataTransfer?.files[0];
+  if (!file) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  await loadPayload(file.name, file.type || 'application/octet-stream', bytes);
+});
+
+// ── 剪贴板粘贴文件 (#7) ──
+
+document.addEventListener('paste', async (e) => {
+  // 如果焦点在输入框内，不处理（让浏览器正常粘贴）
+  const t = e.target as HTMLElement;
+  if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return;
+
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.kind === 'file') {
+      const file = item.getAsFile();
+      if (file) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        await loadPayload(file.name, file.type || 'application/octet-stream', bytes);
+        return;
+      }
+    }
+  }
+  // 如果剪贴板没有文件，检查是否有文本
+  const text = e.clipboardData?.getData('text');
+  if (text && text.length > 0 && text.length <= 4 * 1024 * 1024) {
+    snippetText = text;
+    const bytes = new TextEncoder().encode(text);
+    const snip = packSnippet(text);
+    await loadPayload('文本片段', 'text/plain', snip, bytes.length);
+  }
+});
+
+// ── 加载载荷 ──
 
 async function loadPayload(name: string, type: string, bytes: Uint8Array, displaySize?: number) {
   fileBytes = bytes;
@@ -63,36 +118,34 @@ async function loadPayload(name: string, type: string, bytes: Uint8Array, displa
   $('start-btn').style.display = 'none';
   $('stop-btn').style.display = 'none';
   $('filename').textContent = `${name} · ${fmtSize(displaySize ?? bytes.length)}`;
-  $('status').textContent = '已选择，生成元信息二维码…';
+  $('status').textContent = '已选择，生成接收端地址二维码…';
 
   // 打包容器（文件场景：传原始字节；文本场景：bytes 已是 WNKT 容器）
-  if (type !== 'text/plain' || true) {
-    // 文件：packFile 产生容器；文本：bytes 是 WNKT 容器
-    if (name !== '文本片段') {
-      const packed = await packFile(name, type, bytes);
-      container = packed.container;
-      containerGzip = packed.compression === 'gzip';
-    } else {
-      container = bytes;
-    }
+  if (name !== '文本片段') {
+    const packed = await packFile(name, type, bytes);
+    container = packed.container;
+    containerGzip = packed.compression === 'gzip';
+  } else {
+    container = bytes;
   }
 
-  renderManifest();
-  $('status').textContent = '已就绪 —— 接收端扫码后点开始';
+  showReceiverQr();
+  $('status').textContent = '已就绪 —— 手机扫码打开接收端，对准后点开始';
   $('start-btn').style.display = 'inline-block';
 }
+
+// ── 参数 ──
 
 function currentParams() {
   const fps = Number(($('fps') as HTMLInputElement).value);
   const qrVersion = Number(($('qr-size') as HTMLSelectElement).value);
   const payloadCap = QR_CAPACITY[qrVersion]! - HEADER_LEN;
-  // 块长自动优化：填满 QR 容量（pad 最少，QR 变化明显）。
-  // JS 端 qrSegments 强制 byte mode 单段，容量精确，无需余量（与 Rust CLI 一致）
   const blockLen = Math.max(64, payloadCap);
   return { fps, qrVersion, blockLen, payloadCap };
 }
 
-// qrcode 库需要 byte mode segment 才能编码二进制（默认按 UTF-8 会损坏）
+// ── QR 渲染 ──
+
 function qrSegments(bytes: Uint8Array): Array<{ data: Uint8Array; mode: 'byte' }> {
   return [{ data: bytes, mode: 'byte' }];
 }
@@ -106,9 +159,17 @@ async function drawQr(bytes: Uint8Array, qrVersion?: number) {
   });
 }
 
+/** 显示接收端地址二维码 (#2) */
+function showReceiverQr() {
+  const urlBytes = new TextEncoder().encode(RECEIVER_URL);
+  void drawQr(urlBytes);
+  $('info-text').innerHTML = `手机扫码打开接收端<br/>对准后点 <b>▶ 开始传输</b>`;
+}
+
+/** 显示元信息二维码（传输预览） */
 function renderManifest() {
   if (!container || !fileBytes) return;
-  const { fps, qrVersion, blockLen, payloadCap } = currentParams();
+  const { fps, qrVersion, blockLen } = currentParams();
   const k = Math.max(1, Math.ceil(container.length / blockLen));
   const m = buildManifest({
     payloadType: fileName === '文本片段' ? 1 : 0,
@@ -136,8 +197,8 @@ function fmtSize(n: number): string {
 }
 
 function fmtDuration(s: number): string {
-  if (s < 60) return `${s} 秒`;
-  return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+  if (s < 60) return `${Math.round(s)} 秒`;
+  return `${Math.floor(s / 60)} 分 ${Math.round(s % 60)} 秒`;
 }
 
 let paused = false;
@@ -154,7 +215,7 @@ function startStream() {
   }, 1000 / fps);
 }
 
-/** 渲染指定 seq 的帧到二维码 + 更新进度条（暂停时跳帧用，立即显示目标帧） */
+/** 渲染指定 seq 的帧到二维码 + 更新进度条 */
 function renderFrameAt(s: number) {
   if (!encoder || !container) return;
   const block = encoder.encode(s);
@@ -166,7 +227,7 @@ function renderFrameAt(s: number) {
   updateSeqSlider(s);
 }
 
-/** 暂停：停住当前帧（保持显示），操作后对焦用 */
+/** 暂停 */
 function pause() {
   if (paused) return;
   paused = true;
@@ -201,10 +262,10 @@ function start() {
   startStream();
 }
 
-/** 重发指定块：优先找该块的 degree-1 帧（必解出），找不到降级为包含帧（概率推进） */
+/** 重发指定块 */
 let resendTimer: ReturnType<typeof setInterval> | null = null;
 
-/** 帧进度：可点击/拖动跳转，播放完循环（进度从零开始） */
+/** 帧进度：可点击/拖动跳转 */
 let totalFrames = 0;
 let sliderBound = false;
 function setupSeqSlider(k: number) {
@@ -217,7 +278,6 @@ function setupSeqSlider(k: number) {
     sliderBound = true;
     slider.addEventListener('input', (e) => {
       const target = Number(slider.value) >>> 0;
-      // 气泡：帧号 + 百分比
       const tip = $('seq-tip') as HTMLElement;
       const pct = Math.floor((target / Math.max(1, totalFrames)) * 100);
       tip.textContent = `帧 ${target} · ${pct}%`;
@@ -226,7 +286,6 @@ function setupSeqSlider(k: number) {
       const ratio = target / Math.max(1, totalFrames);
       tip.style.left = `${rect.left + rect.width * ratio - 30}px`;
       tip.style.top = `${rect.top - 28}px`;
-      // 拖动时：跳到该帧并暂停，且立即渲染目标帧（暂停中也能看到对应帧）
       if (streaming && encoder) {
         seq = target;
         if (!paused) {
@@ -246,16 +305,13 @@ function setupSeqSlider(k: number) {
 
 function updateSeqSlider(s: number) {
   const label = $('seq-label');
-  // 循环：seq 到总帧数后归零重新走
   const cycle = s % Math.max(1, totalFrames);
   const slider = $('seq-slider') as HTMLInputElement;
-  // 始终同步 slider.value（程序赋值不触发 input 事件，不影响用户拖动；
-  // 之前 activeElement 检查导致拖动后 focus 残留 → label 归零但滑块不动）
   slider.value = String(cycle);
   label.textContent = `${cycle} / ~${totalFrames}`;
 }
 
-/** 块输入框：从此块开始 —— 跳到该块的帧，暂停并立即显示 */
+/** 块输入框：从此块开始 */
 function blockFromInput() {
   const input = $('block-input') as HTMLInputElement;
   const b = Number(input.value);
@@ -269,7 +325,6 @@ function blockFromInput() {
     $('status').textContent = `⚠️ 块 ${b}：65536 帧内未找到任何包含它的帧`;
     return;
   }
-  // 跳到该块的帧，暂停并立即渲染（暂停中就能看到目标帧，对焦后继续）
   seq = s;
   if (!paused) {
     paused = true;
@@ -287,7 +342,7 @@ function stop() {
   $('start-btn').style.display = 'inline-block';
   $('stop-btn').style.display = 'none';
   $('status').textContent = '已停止 —— 可调整参数重新开始';
-  renderManifest();
+  showReceiverQr();
 }
 
 $('start-btn').addEventListener('click', start);
@@ -298,20 +353,20 @@ $('block-input').addEventListener('keydown', (e: KeyboardEvent) => {
   e.stopPropagation();
 });
 
-// 参数变化时重新渲染 manifest
+// 参数变化时重新渲染
 for (const id of ['fps', 'qr-size']) {
   $(id).addEventListener('input', () => {
     $('fps-label').textContent = ($('fps') as HTMLInputElement).value;
-    if (container && !streaming) renderManifest();
+    if (container && !streaming) showReceiverQr();
   });
 }
 
-// 点击二维码 = 暂停/继续（留对焦时间）
+// 点击二维码 = 暂停/继续
 canvas.addEventListener('click', () => {
   togglePause();
 });
 
-// 空格 = 暂停/继续（输入框内不触发）
+// 空格 = 暂停/继续
 window.addEventListener('keydown', (e: KeyboardEvent) => {
   if (e.code === 'Space') {
     const t = e.target as HTMLElement;
