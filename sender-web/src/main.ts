@@ -30,7 +30,9 @@ let seq = 0;
 let snippetText = '';
 
 function pickFile() {
-  $('file-input').click();
+  const input = $('file-input') as HTMLInputElement;
+  input.value = '';
+  input.click();
 }
 
 $('pick-btn').addEventListener('click', pickFile);
