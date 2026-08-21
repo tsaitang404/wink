@@ -14,6 +14,10 @@ import {
 import { unpackFile, unpackSnippet, verifyFile } from '../../shared/container.ts';
 import { parseManifest } from '../../shared/manifest.ts';
 
+// 版本号
+const verEl = document.getElementById("version");
+if (verEl) verEl.textContent = `v${__APP_VERSION__}`;
+
 const $ = (id: string) => document.getElementById(id)!;
 
 let video: HTMLVideoElement = document.createElement('video');
