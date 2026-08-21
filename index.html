@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>wink 接收端</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: #111; color: #eee; min-height: 100vh;
+        display: flex; flex-direction: column; align-items: center;
+      }
+      header { padding: 16px; font-size: 18px; font-weight: 600; }
+      header .sub { font-size: 12px; color: #888; font-weight: 400; }
+      #video-wrap {
+        position: sticky; top: 0; z-index: 20;
+        width: 100%; max-width: 480px; margin: 0 auto;
+        background: #121212; padding-bottom: 6px;
+      }
+      video {
+        width: 100%; border-radius: 12px; background: #000;
+        display: block; aspect-ratio: 4/3; object-fit: cover;
+      }
+      #status {
+        padding: 12px; text-align: center; color: #bbb; font-size: 14px;
+        min-height: 44px; width: 100%;
+      }
+      #manifest-card {
+        display: none; background: #1d1d1d; border-radius: 12px;
+        padding: 16px; width: calc(100% - 32px); max-width: 480px; margin: 8px auto;
+        border: 1px solid #333;
+      }
+      #manifest-card h3 { font-size: 14px; margin-bottom: 8px; color: #7c5cff; }
+      #manifest-card .row { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
+      #manifest-card .row span:last-child { color: #ccc; }
+      #progress-wrap { display: none; width: calc(100% - 32px); max-width: 480px; margin: 8px auto; }
+      #progress-bar {
+        width: 100%; height: 10px; background: #2a2a2a; border-radius: 5px; overflow: hidden;
+      }
+      #progress-fill { height: 100%; width: 0; background: linear-gradient(90deg, #7c5cff, #00d4ff); transition: width 0.3s; }
+      #progress-stats { font-size: 12px; color: #999; text-align: center; padding: 6px; }
+      #result {
+        display: none; width: calc(100% - 32px); max-width: 480px; margin: 8px auto;
+        background: #1d1d1d; border-radius: 12px; padding: 16px; border: 1px solid #333;
+      }
+      #result h3 { font-size: 14px; color: #00d48a; margin-bottom: 8px; }
+      #result .file-meta { font-size: 12px; color: #888; margin-bottom: 10px; }
+      .btn {
+        background: #7c5cff; color: #fff; border: none; padding: 12px 24px;
+        border-radius: 10px; font-size: 15px; cursor: pointer; margin: 6px;
+      }
+      .btn:active { opacity: 0.8; }
+      .btn.ghost { background: #2a2a2a; }
+      .btn-row { display: flex; justify-content: center; flex-wrap: wrap; }
+      #text-preview {
+        background: #000; padding: 12px; border-radius: 8px; font-family: monospace;
+        font-size: 12px; white-space: pre-wrap; word-break: break-all;
+        max-height: 200px; overflow-y: auto; margin-bottom: 10px;
+      }
+      #media-preview { max-width: 100%; max-height: 240px; border-radius: 8px; margin-bottom: 10px; display: none; }
+      #start-btn { margin: 12px auto; }
+      .verified { color: #00d48a; font-size: 12px; }
+      #block-grid {
+        display: flex; flex-wrap: wrap; gap: 2px; margin-top: 8px; max-height: 60px; overflow: hidden;
+      }
+      .blk { width: 6px; height: 6px; background: #333; border-radius: 1px; }
+      .blk.solved { background: #7c5cff; }
+      #frame-timeline {
+        display: flex; gap: 2px; margin: 8px 0 4px;
+        padding: 4px; background: #161616; border-radius: 6px;
+        width: 100%; overflow: hidden;
+      }
+      #frame-timeline .ft { flex: 1 1 0; min-width: 2px; height: 14px; border-radius: 1px; background: #333; }
+      #frame-timeline .ft.got { background: #2ecc71; }
+      #frame-timeline .ft.partial { background: #e67e22; }
+      #frame-timeline .ft-pct { flex: 0 0 auto; margin-left: 6px; font-size: 11px; color: #2ecc71; align-self: center; min-width: 32px; text-align: right; }
+      #block-grid {
+        display: grid; gap: 2px; padding: 6px; background: #161616;
+        border-radius: 8px; max-height: 140px; overflow-y: auto;
+        grid-template-columns: repeat(auto-fill, 8px);
+      }
+      .blk { width: 8px; height: 8px; border-radius: 2px; background: #3a3a3a; cursor: pointer; position: relative; }
+      .blk.pending { background: #e67e22; }
+      .blk.solved { background: #2ecc71; }
+      .block-title { font-size: 11px; color: #888; margin: 6px 0 4px; }
+      .blk-tip {
+        position: fixed; z-index: 50; background: #2a2a2a; border: 1px solid #555;
+        border-radius: 6px; padding: 4px 8px; font-size: 11px; color: #eee;
+        pointer-events: none; display: none;
+      }
+      #video-wrap.hidden { display: none; }
+      #file-list-wrap {
+        display: none; width: calc(100% - 32px); max-width: 480px; margin: 8px auto;
+      }
+      #file-list-wrap h3 { font-size: 14px; color: #888; margin-bottom: 8px; }
+      .file-item {
+        display: flex; justify-content: space-between; align-items: center;
+        background: #1d1d1d; border-radius: 8px; padding: 10px 12px; margin: 4px 0;
+        border: 1px solid #333; font-size: 13px;
+      }
+      .file-item .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ddd; }
+      .file-item .fmeta { color: #777; font-size: 11px; margin-right: 8px; white-space: nowrap; }
+      .file-item button { background: #2a2a2a; color: #ccc; border: none; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+      .fps-hint { font-size: 11px; color: #e67e22; margin-top: 4px; display: none; }
+    </style>
+    <script type="module" crossorigin src="./assets/index-tZxzSOwV.js"></script>
+  </head>
+  <body>
+    <header>
+      wink 接收端 <span id="version" style="font-size:12px;color:#888;font-weight:normal"></span>
+      <div class="sub">对镜头 wink，文件就来了</div>
+    </header>
+
+    <div id="video-wrap">
+      <video id="cam" autoplay playsinline muted></video>
+    </div>
+
+    <div class="btn-row">
+      <button id="start-btn" class="btn">▶ 启动摄像头</button>
+    </div>
+
+    <div id="status">等待启动摄像头…</div>
+
+    <div id="manifest-card">
+      <h3>📡 收到传输预览</h3>
+      <div class="row"><span>文件名</span><span id="mf-name"></span></div>
+      <div class="row"><span>大小</span><span id="mf-size"></span></div>
+      <div class="row"><span>块数 K</span><span id="mf-k"></span></div>
+      <div class="row"><span>帧率</span><span id="mf-fps"></span></div>
+      <div class="row"><span>预估时间</span><span id="mf-est"></span></div>
+    </div>
+
+    <div id="progress-wrap">
+      <div class="progress-bar" id="frame-progress"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-stats" id="progress-stats">等待传输…</div>
+      <div class="fps-hint" id="fps-hint"></div>
+      <div id="frame-timeline" title="帧接收时间线：绿色=已收到"></div>
+      <div class="block-title">块状态（点击查看块号）</div>
+      <div id="block-grid"></div>
+    </div>
+
+    <div id="result">
+      <h3>✅ 接收完成 <span class="verified">· SHA-256 已校验</span></h3>
+      <div id="text-preview" style="display:none"></div>
+      <img id="media-preview" />
+      <video id="media-video" controls style="display:none;max-width:100%;max-height:240px;border-radius:8px;margin-bottom:10px"></video>
+      <div class="file-meta" id="file-meta"></div>
+      <div class="btn-row">
+        <button id="copy-btn" class="btn ghost" style="display:none">📋 复制</button>
+        <button id="save-btn" class="btn">💾 保存文件</button>
+      </div>
+    </div>
+
+    <div id="file-list-wrap">
+      <h3>📁 已接收文件</h3>
+      <div id="file-list"></div>
+    </div>
+
+    <div id="blk-tip" class="blk-tip"></div>
+    <div class="hint" style="margin-top:6px"><a href="https://github.com/tsaitang404/wink" target="_blank" rel="noopener" style="color:#8b8b8b;text-decoration:none;display:inline-flex;align-items:center;gap:5px"><svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>tsaitang404/wink</a></div>
+
+  </body>
+</html>
