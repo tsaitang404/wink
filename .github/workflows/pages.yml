@@ -2,12 +2,7 @@ name: Deploy Receiver to GitHub Pages
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'receiver/**'
-      - 'shared/**'
-      - 'package.json'
-      - '.github/workflows/pages.yml'
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
