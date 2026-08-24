@@ -53,6 +53,8 @@ async function startCamera() {
       video = $('cam') as HTMLVideoElement;
       video.srcObject = stream;
     }
+    // 状态机：从隐藏/完成态恢复 → 原样显示（必须在 play() 前，display:none 的 video 不能 play）
+    leaveHiddenMode();
     // 强制重新激活画面（隐藏后 play 可能暂停）
     video.srcObject = stream;
     await video.play();
@@ -63,8 +65,6 @@ async function startCamera() {
     currentIdentity = '';
     framesNeeded = 0;
     framesGot = 0;
-    // 状态机：从隐藏/完成态恢复 → 原样显示
-    leaveHiddenMode();
     $('manifest-card').style.display = 'none';
     $('progress-wrap').style.display = 'none';
     $('result').style.display = 'none';
