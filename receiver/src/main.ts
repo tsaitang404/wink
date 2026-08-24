@@ -91,19 +91,8 @@ function leaveHiddenMode() {
   $('video-wrap').classList.remove('hidden');
 }
 
-/** BarcodeDetector 优先，zxing 兜底 */
+/** zxing-wasm 解码（BarcodeDetector 在 Via 等轻量浏览器半成品，直接跳过） */
 async function decodeFrame(imageData: ImageData): Promise<{ bytes: Uint8Array }[]> {
-  if ('BarcodeDetector' in window) {
-    try {
-      const detector = new BarcodeDetector({ formats: ['qr_code'] });
-      const detected = await detector.detect(imageData);
-      if (detected.length > 0) {
-        return detected.map((d: DetectedBarcode) => ({ bytes: new Uint8Array(d.rawValue as unknown as ArrayBuffer) }));
-      }
-    } catch {
-      // BarcodeDetector 失败，fallback zxing
-    }
-  }
   const results = await readBarcodesFromImageData(imageData, {
     formats: ['QRCode'],
     tryHarder: true,
