@@ -454,12 +454,27 @@ function showResult(name: string, type: string, bytes: Uint8Array) {
   }
 
   const saveBtn = $('save-btn') as HTMLButtonElement;
+  const shareBtn = $('share-btn') as HTMLButtonElement;
   saveBtn.onclick = () => {
     const a = document.createElement('a');
     a.href = url;
     a.download = safeFileName(name);
     a.click();
   };
+  // Web Share API：移动端直接分享到微信/QQ等
+  if (navigator.share) {
+    shareBtn.style.display = 'inline-block';
+    shareBtn.onclick = async () => {
+      try {
+        const file = new File([bytes as BlobPart], safeFileName(name), { type });
+        await navigator.share({ files: [file] });
+      } catch {
+        // 用户取消或分享失败，静默
+      }
+    };
+  } else {
+    shareBtn.style.display = 'none';
+  }
 
   // 加入文件历史列表
   receivedFiles.push({ name, type, bytes, time: Date.now() });
