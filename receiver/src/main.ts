@@ -163,7 +163,14 @@ function handleBytes(bytes: Uint8Array) {
       updateProgress(decoder, framesGot);
       if (decoder.isComplete) {
         const container = decoder.assemble();
-        if (container) onComplete(container);
+        if (container) {
+        // 区分 WNKT（文本）和 WNK1（文件）
+        if (container.length >= 4 && container[0] === TEXT_MAGIC[0] && container[1] === TEXT_MAGIC[1]) {
+          onTextComplete(container);
+        } else {
+          onComplete(container);
+        }
+      }
       }
     }
     return;
