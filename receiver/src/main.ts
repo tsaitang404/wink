@@ -165,7 +165,7 @@ function handleBytes(bytes: Uint8Array) {
         const container = decoder.assemble();
         if (container) {
         // 区分 WNKT（文本）和 WNK1（文件）
-        if (container.length >= 4 && container[0] === TEXT_MAGIC[0] && container[1] === TEXT_MAGIC[1]) {
+        if (container.length >= 4 && container[0] === TEXT_MAGIC[0] && container[1] === TEXT_MAGIC[1] && container[2] === TEXT_MAGIC[2] && container[3] === TEXT_MAGIC[3]) {
           onTextComplete(container);
         } else {
           onComplete(container);
@@ -180,7 +180,7 @@ function handleBytes(bytes: Uint8Array) {
     onComplete(bytes);
     return;
   }
-  if (bytes.length >= 4 && bytes[0] === TEXT_MAGIC[0] && bytes[1] === TEXT_MAGIC[1]) {
+  if (bytes.length >= 4 && bytes[0] === TEXT_MAGIC[0] && bytes[1] === TEXT_MAGIC[1] && bytes[2] === TEXT_MAGIC[2] && bytes[3] === TEXT_MAGIC[3]) {
     onTextComplete(bytes);
   }
 }
