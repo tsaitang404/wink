@@ -126,3 +126,87 @@ describe('帧协议', () => {
     assert.deepEqual(parsed.block, block);
   });
 });
+
+describe('容器魔数区分 (WNK1 vs WNKT)', () => {
+  it('文件容器 WNK1 不会被误判为文本 WNKT', async () => {
+    const data = new Uint8Array(256).map((_, i) => i & 0xff);
+    const packed = await packFile('test.bin', 'application/octet-stream', data);
+    const container = packed.container;
+    assert.equal(container[0], 0x57);
+    assert.equal(container[1], 0x4e);
+    assert.equal(container[2], 0x4b);
+    assert.equal(container[3], 0x31); // 1, not T
+    assert.throws(() => unpackSnippet(container), /Not a text container/);
+  });
+
+  it('文本容器 WNKT 不能被 unpackFile 解析', async () => {
+    const text = 'hello';
+    const snip = packSnippet(text);
+    assert.equal(snip[0], 0x57);
+    assert.equal(snip[1], 0x4e);
+    assert.equal(snip[2], 0x4b);
+    assert.equal(snip[3], 0x54); // T, not 1
+    await assert.rejects(() => unpackFile(snip));
+  });
+
+  it('仅前2字节匹配不够——WNK1和WNKT前3字节相同', async () => {
+    const fileData = new Uint8Array(64).map((_, i) => i);
+    const fileContainer = (await packFile('a.bin', 'application/octet-stream', fileData)).container;
+    const textContainer = packSnippet('hi');
+    assert.equal(fileContainer[0], textContainer[0]);
+    assert.equal(fileContainer[1], textContainer[1]);
+    assert.equal(fileContainer[2], textContainer[2]);
+    assert.notEqual(fileContainer[3], textContainer[3]); // 1 vs T
+  });
+
+  it('文件通过 LT 编解码后正确识别为文件（非文本）', async () => {
+    const data = new Uint8Array(512).map((_, i) => (i * 7) & 0xff);
+    const packed = await packFile('data.bin', 'application/octet-stream', data);
+    const { decoder, assembled } = roundtripLT(packed.container, 256, 88);
+    assert.ok(decoder.isComplete);
+    assert.equal(assembled[0], 0x57);
+    assert.equal(assembled[3], 0x31);
+    const unpacked = await unpackFile(assembled);
+    assert.ok(await verifyFile(unpacked));
+    assert.deepEqual(unpacked.bytes, data);
+  });
+
+  it('文本通过 LT 编解码后正确识别为文本（非文件）', () => {
+    const text = 'LT roundtrip text';
+    const snip = packSnippet(text);
+    const { decoder, assembled } = roundtripLT(snip, 128, 99);
+    assert.ok(decoder.isComplete);
+    assert.equal(assembled[0], 0x57);
+    assert.equal(assembled[3], 0x54);
+    assert.equal(unpackSnippet(assembled), text);
+  });
+});
+
+describe('文本容器边界', () => {
+  it('空文本 roundtrip', () => {
+    const snip = packSnippet('');
+    assert.equal(unpackSnippet(snip), '');
+  });
+
+  it('长文本 roundtrip (10KB)', () => {
+    const text = 'A'.repeat(10000);
+    const snip = packSnippet(text);
+    assert.equal(unpackSnippet(snip), text);
+  });
+
+  it('Unicode 特殊字符', () => {
+    const text = '🎉🔥💀';
+    const snip = packSnippet(text);
+    assert.equal(unpackSnippet(snip), text);
+  });
+
+  it('过短数据抛出异常', () => {
+    assert.throws(() => unpackSnippet(new Uint8Array([0x57, 0x4e])), /too short/);
+  });
+
+  it('魔数不匹配抛出异常', () => {
+    const bad = new Uint8Array(16);
+    bad[0] = 0x00;
+    assert.throws(() => unpackSnippet(bad), /Not a text container/);
+  });
+});
