@@ -1,6 +1,6 @@
 [package]
 name = "wink"
-version = "0.1.0"
+version = "0.9.17"
 edition = "2021"
 description = "眨眼式光学文件传输：终端对摄像头眨眼传文件"
 license = "MIT"
