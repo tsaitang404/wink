@@ -2,11 +2,7 @@
 import { readBarcodesFromImageData } from 'zxing-wasm/full';
 import { LTDecoder } from '../../shared/fountain.ts';
 import {
-  FRAME_MAGIC,
-  HEADER_LEN,
-  FILE_MAGIC,
-  TEXT_MAGIC,
-  MANIFEST_MAGIC,
+  classifyPayload,
   parseFrame,
   streamIdentity,
   safeFileName,
@@ -123,10 +119,13 @@ async function decodeLoop() {
 }
 
 function handleBytes(bytes: Uint8Array) {
-  // 1. 元信息帧
-  if (bytes.length >= 4 && bytes[0] === MANIFEST_MAGIC[0] && bytes[1] === MANIFEST_MAGIC[1]) {
-    const m = parseManifest(bytes);
-    if (m) {
+  // 完成/停止后可能还有在途解码结果：丢弃，避免重复交付（静态单码尤其明显）
+  if (!decoding) return;
+  switch (classifyPayload(bytes)) {
+    // 1. 元信息帧
+    case 'manifest': {
+      const m = parseManifest(bytes);
+      if (!m) return;
       manifest = m;
       // 自适应解码分辨率：v15/v20→200px, v27→256px, v40→0(原始)
       decodeWidth = m.qrVersion <= 20 ? 200 : m.qrVersion <= 27 ? 256 : 0;
@@ -139,49 +138,48 @@ function handleBytes(bytes: Uint8Array) {
         framesGot = 0;
       }
       setStatus('已收到传输预览，等待帧流…');
+      return;
     }
-    return;
-  }
-  // 2. 帧流帧
-  if (bytes.length > HEADER_LEN && bytes[0] === FRAME_MAGIC) {
-    const parsed = parseFrame(bytes);
-    if (!parsed) return;
-    const { header, block } = parsed;
-    const identity = streamIdentity(header);
-    if (identity !== currentIdentity) {
-      // 新流：重置解码器
-      currentIdentity = identity;
-      decoder = new LTDecoder(header.k, header.blockLen, header.sessionId, header.totalLen);
-      framesNeeded = Math.ceil(header.k * 1.15);
-      framesGot = 0;
-      startTime = performance.now();
-      showStreamHeader(header);
-    }
-    if (decoder) {
+    // 2. 帧流帧
+    case 'frame': {
+      const parsed = parseFrame(bytes);
+      if (!parsed) return;
+      const { header, block } = parsed;
+      const identity = streamIdentity(header);
+      if (identity !== currentIdentity) {
+        // 新流：重置解码器
+        currentIdentity = identity;
+        decoder = new LTDecoder(header.k, header.blockLen, header.sessionId, header.totalLen);
+        framesNeeded = Math.ceil(header.k * 1.15);
+        framesGot = 0;
+        startTime = performance.now();
+        showStreamHeader(header);
+      }
+      if (!decoder) return;
       decoder.addFrame(header.seq, block);
       framesGot = decoder.framesNew;
       updateProgress(decoder, framesGot);
       if (decoder.isComplete) {
         const container = decoder.assemble();
-        if (container) {
+        if (!container) return;
         // 区分 WNKT（文本）和 WNK1（文件）
-        if (container.length >= 4 && container[0] === TEXT_MAGIC[0] && container[1] === TEXT_MAGIC[1] && container[2] === TEXT_MAGIC[2] && container[3] === TEXT_MAGIC[3]) {
+        if (classifyPayload(container) === 'text') {
           onTextComplete(container);
         } else {
           onComplete(container);
         }
       }
-      }
+      return;
     }
-    return;
-  }
-  // 3. 文件/文本容器（异常直达：无 manifest 场景）
-  if (bytes.length >= 4 && bytes[0] === FILE_MAGIC[0] && bytes[1] === FILE_MAGIC[1]) {
-    onComplete(bytes);
-    return;
-  }
-  if (bytes.length >= 4 && bytes[0] === TEXT_MAGIC[0] && bytes[1] === TEXT_MAGIC[1] && bytes[2] === TEXT_MAGIC[2] && bytes[3] === TEXT_MAGIC[3]) {
-    onTextComplete(bytes);
+    // 3. 单码容器（短文本直发 / 异常直达：无 manifest 场景）
+    case 'text':
+      onTextComplete(bytes);
+      return;
+    case 'file':
+      onComplete(bytes);
+      return;
+    default:
+      return;
   }
 }
 

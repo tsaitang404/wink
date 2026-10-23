@@ -107,6 +107,34 @@ export function streamIdentity(h: FrameHeader): string {
   return `${h.sessionId}:${h.k}:${h.blockLen}:${h.totalLen}:${h.payloadFnv}`;
 }
 
+/** 载荷是否以完整魔数开头（必须逐字节比较，不能只看前 2 字节） */
+export function hasMagic(bytes: Uint8Array, magic: Uint8Array): boolean {
+  if (bytes.length < magic.length) return false;
+  for (let i = 0; i < magic.length; i++) {
+    if (bytes[i] !== magic[i]) return false;
+  }
+  return true;
+}
+
+export type PayloadKind = 'manifest' | 'text' | 'file' | 'frame' | 'unknown';
+
+/**
+ * 二维码载荷分类。
+ *
+ * 顺序很重要：WNK1 / WNKT / WNKM 与帧头首字节都是 'W'，
+ * 只看前 2 字节（甚至首字节）会把单码容器误判成元信息/帧。
+ * 短文本直发的 WNKT 容器必须走 'text' 分支。
+ */
+export function classifyPayload(bytes: Uint8Array): PayloadKind {
+  if (hasMagic(bytes, MANIFEST_MAGIC)) return 'manifest';
+  if (hasMagic(bytes, TEXT_MAGIC)) return 'text';
+  if (hasMagic(bytes, FILE_MAGIC)) return 'file';
+  if (bytes.length > HEADER_LEN && bytes[0] === FRAME_MAGIC && bytes[1] === FRAME_VERSION) {
+    return parseFrame(bytes) ? 'frame' : 'unknown';
+  }
+  return 'unknown';
+}
+
 // ─────────────────────────────────────────────
 // 安全文件名
 // ─────────────────────────────────────────────

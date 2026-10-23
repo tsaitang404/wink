@@ -4,6 +4,7 @@ import { LTEncoder } from '../../shared/fountain.ts';
 import { packFrame, fnv1a, HEADER_LEN } from '../../shared/protocol.ts';
 import { packFile, packSnippet } from '../../shared/container.ts';
 import { buildManifest, packManifest } from '../../shared/manifest.ts';
+import { qrCapacity, smallestQrVersion } from '../../shared/qr-capacity.ts';
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $('qr') as HTMLCanvasElement;
@@ -11,14 +12,6 @@ const ctx = canvas.getContext('2d')!;
 
 // 接收端地址（固定 Pages 地址）
 const RECEIVER_URL = 'https://tsaitang404.github.io/wink/';
-
-// QR 版本 → payload 容量（byte mode, ECC L，标准 v1-v40）
-const QR_CAPACITY: Record<number, number> = {
-  1: 17, 2: 32, 3: 53, 4: 78, 5: 106, 6: 134, 7: 154, 8: 192, 9: 230, 10: 271,
-  11: 321, 12: 367, 13: 425, 14: 458, 15: 520, 16: 586, 17: 644, 18: 718, 19: 792, 20: 858,
-  21: 929, 22: 1003, 23: 1091, 24: 1171, 25: 1273, 26: 1367, 27: 1465, 28: 1528, 29: 1628, 30: 1732,
-  31: 1840, 32: 1952, 33: 2068, 34: 2188, 35: 2303, 36: 2431, 37: 2563, 38: 2699, 39: 2809, 40: 2953,
-};
 
 let fileBytes: Uint8Array | null = null;
 let fileName = '';
@@ -51,13 +44,57 @@ $('file-input').addEventListener('change', async (e) => {
 
 // ── 粘贴文本 ──
 
+/**
+ * 粘贴文本入口：
+ * - WNKT 容器能装进一个二维码 → 直接显示单码（接收端扫码即得，无需帧流）
+ * - 装不下 → 走原有 manifest + 喷泉帧流
+ */
+async function handleText(text: string): Promise<void> {
+  if (!text) return;
+  let snip: Uint8Array;
+  try {
+    snip = packSnippet(text);
+  } catch (e) {
+    $('status').textContent = `⚠️ ${(e as Error).message}`;
+    return;
+  }
+  snippetText = text;
+  const textBytes = new TextEncoder().encode(text).length;
+  const version = smallestQrVersion(snip.length);
+  if (version !== null) {
+    showSingleQrText(snip, textBytes, version);
+    return;
+  }
+  await loadPayload('文本片段', 'text/plain', snip, textBytes);
+}
+
+/** 短文本直发：静态单张二维码，不进入帧流 */
+function showSingleQrText(snip: Uint8Array, textBytes: number, version: number) {
+  // 切换载荷时停掉可能正在运行的帧流
+  streaming = false;
+  if (streamTimer) clearInterval(streamTimer);
+  streamTimer = null;
+  encoder = null;
+  container = null;
+  fileBytes = null;
+  fileName = '文本片段';
+  fileType = 'text/plain';
+  $('start-btn').style.display = 'none';
+  $('stop-btn').style.display = 'none';
+  $('sender-progress-wrap').style.display = 'none';
+  ($('seq-tip') as HTMLElement).style.display = 'none';
+  $('filename').textContent = `文本片段 · ${fmtSize(textBytes)}`;
+  $('status').textContent = '✅ 文本较短 —— 已直接生成单张二维码，扫码即可';
+  $('info-text').innerHTML =
+    `单张二维码（v${version}）· ${fmtSize(snip.length)}<br/>` +
+    `接收端对准扫码即可，无需开始传输 · <a href="${RECEIVER_URL}" target="_blank" rel="noopener">${RECEIVER_URL}</a>`;
+  void drawQr(snip, version);
+}
+
 $('paste-btn').addEventListener('click', async () => {
   const text = prompt('粘贴要发送的文本（≤ 4MB）：');
   if (text == null) return;
-  snippetText = text;
-  const bytes = new TextEncoder().encode(text);
-  const snip = packSnippet(text);
-  await loadPayload('文本片段', 'text/plain', snip, bytes.length);
+  await handleText(text);
 });
 
 // ── 拖拽文件 (#7) ──
@@ -98,12 +135,7 @@ document.addEventListener('paste', async (e) => {
   }
   // 如果剪贴板没有文件，检查是否有文本
   const text = e.clipboardData?.getData('text');
-  if (text && text.length > 0 && text.length <= 4 * 1024 * 1024) {
-    snippetText = text;
-    const bytes = new TextEncoder().encode(text);
-    const snip = packSnippet(text);
-    await loadPayload('文本片段', 'text/plain', snip, bytes.length);
-  }
+  if (text) await handleText(text);
 });
 
 // ── 加载载荷 ──
@@ -139,7 +171,7 @@ async function loadPayload(name: string, type: string, bytes: Uint8Array, displa
 function currentParams() {
   const fps = Number(($('fps') as HTMLInputElement).value);
   const qrVersion = Number(($('qr-size') as HTMLSelectElement).value);
-  const payloadCap = QR_CAPACITY[qrVersion]! - HEADER_LEN;
+  const payloadCap = qrCapacity(qrVersion) - HEADER_LEN;
   const blockLen = Math.max(64, payloadCap);
   return { fps, qrVersion, blockLen, payloadCap };
 }
